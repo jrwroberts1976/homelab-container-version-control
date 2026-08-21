@@ -1,0 +1,28 @@
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Plaintext/decrypted secrets
+*.dec.yaml
+*.dec.yml
+*.dec.json
+*.dec.env
+*.plaintext
+secrets/plaintext/
+secrets/decrypted/
+
+# age private key material
+keys.txt
+age-key.txt
+*.agekey
+
+# Temporary deployment material
+.tmp/
+tmp/
+work/
+
+# Local editor / OS noise
+.vscode/
+.idea/
+.DS_Store
