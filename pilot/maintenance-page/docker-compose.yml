@@ -1,0 +1,22 @@
+services:
+  maintenance-page:
+    image: nginx:alpine
+    container_name: maintenance-page
+    restart: unless-stopped
+
+    ports:
+      - "192.168.2.220:8088:80"
+
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+    networks:
+      - homelab_apps
+    labels:
+      - "wud.watch=true"
+      - "wud.watch.digest=true"
+
+networks:
+  homelab_apps:
+    external: true

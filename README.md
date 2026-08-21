@@ -54,6 +54,16 @@ The project will be introduced in phases rather than enabling automated deployme
 - **Stage 6 — Production rollout:** extend the process to critical services after pilot acceptance.
 - **Stage 7 — Observability and optimisation:** Grafana compliance dashboards, alerts and policy tuning.
 
+## Proven pilot pattern
+
+The Engineering Portfolio deployment on TestServer is being used as the first real-world guarded-deployment pattern.
+
+The deployment workflow now distinguishes Docker `running` from application readiness, waits for `/healthz` with a bounded retry loop, fails early on Docker `unhealthy`, runs route smoke tests and keeps maintenance mode active on failure.
+
+The associated maintenance-page stack has also been captured in this repository. Its Nginx fallback was proven after container recreation to serve the maintenance page for real application routes and unknown paths instead of returning 404.
+
+See [Maintenance Page Pilot](pilot/maintenance-page/README.md).
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
@@ -62,10 +72,9 @@ The project will be introduced in phases rather than enabling automated deployme
 - [Operating model](docs/operating-model.md)
 - [Image version policy](policy/image-version-policy.md)
 - [Rollback policy](policy/rollback-policy.md)
+- [Maintenance Page Pilot](pilot/maintenance-page/README.md)
 
 ## Repository layout
-
-Planned structure:
 
 ```text
 homelab-container-version-control/
@@ -80,6 +89,12 @@ homelab-container-version-control/
 │   ├── image-version-policy.md
 │   ├── rollback-policy.md
 │   └── exceptions.yml
+├── pilot/
+│   └── maintenance-page/
+│       ├── README.md
+│       ├── docker-compose.yml
+│       └── nginx/
+│           └── default.conf
 ├── inventory/
 │   ├── ids-01.yml
 │   └── testserver.yml
@@ -96,4 +111,4 @@ homelab-container-version-control/
 
 ## Current status
 
-Repository bootstrap and planning are in progress. No automated production deployment will be enabled until the inventory, secrets foundation, validation gate and rollback controls are complete.
+The architecture, policy and staged plan are now on `main`. The Engineering Portfolio deployment and maintenance-page workflow have provided the first production evidence for the guarded-deployment design. Stage 0 discovery and inventory remain the next project focus; no general automated production deployment will be enabled until the inventory, secrets foundation, validation gate and rollback controls are complete.
