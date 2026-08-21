@@ -54,6 +54,15 @@ The project will be introduced in phases rather than enabling automated deployme
 - **Stage 6 — Production rollout:** extend the process to critical services after pilot acceptance.
 - **Stage 7 — Observability and optimisation:** Grafana compliance dashboards, alerts and policy tuning.
 
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Project plan and timeline](docs/project-plan.md)
+- [Secrets management](docs/secrets-management.md)
+- [Operating model](docs/operating-model.md)
+- [Image version policy](policy/image-version-policy.md)
+- [Rollback policy](policy/rollback-policy.md)
+
 ## Repository layout
 
 Planned structure:
