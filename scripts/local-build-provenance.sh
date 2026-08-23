@@ -127,6 +127,16 @@ for container_id in "${containers[@]}"; do
         assessment="unverified-no-revision-label"
     elif [[ "$source_git_commit" == "$image_revision" || "$source_git_commit" == "$image_revision"* ]]; then
         assessment="revision-match"
+    elif git -C "$source_git_root" \
+            cat-file -e "${image_revision}^{commit}" 2>/dev/null && \
+         git -C "$source_git_root" \
+            merge-base --is-ancestor "$image_revision" "$source_git_commit" && \
+         git -C "$source_git_root" \
+            diff --quiet "$image_revision" "$source_git_commit" -- "$context_relative"; then
+        # An image built from an older repository commit remains valid when
+        # that commit is an ancestor of HEAD and its tracked build context
+        # has not changed. Unrelated repository commits do not create drift.
+        assessment="revision-match"
     else
         assessment="revision-mismatch"
     fi
