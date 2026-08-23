@@ -142,8 +142,20 @@ for container_id in "${containers[@]}"; do
         )"
 
         build_argument_names="$(
-            jq -r '(.build.args // {}) | keys | join(",")' \
-                <<<"$service_json"
+            jq -r '
+              [
+                (.build.args // {}) |
+                keys[]? |
+                select(
+                  test(
+                    "PASSWORD|PASSWD|TOKEN|SECRET|CREDENTIAL|API_KEY|PRIVATE_KEY|ACCESS_KEY|AUTH_KEY|CLIENT_SECRET";
+                    "i"
+                  )
+                )
+              ] |
+              unique |
+              join(",")
+            ' <<<"$service_json"
         )"
     fi
 
