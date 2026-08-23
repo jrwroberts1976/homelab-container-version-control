@@ -1,0 +1,46 @@
+version: 1
+
+# Policy exceptions are explicit, reviewable and time-bounded.
+# Do not record secret values in this file.
+#
+# Required fields for each entry:
+# - id
+# - status: proposed | approved | expired | revoked
+# - scope.host
+# - scope.compose_project
+# - scope.compose_service (use "*" only for an explicitly reviewed project-wide exception)
+# - type: floating-image | digest-unavailable | downgrade | local-build-provenance | secret-environment
+# - rationale
+# - risk
+# - compensating_controls
+# - owner
+# - approved_by
+# - approved_on
+# - review_on
+# - rollback_method
+# - evidence
+#
+# Example:
+#
+# exceptions:
+#   - id: EX-2026-001
+#     status: proposed
+#     scope:
+#       host: ids-01
+#       compose_project: greenbone-community-edition
+#       compose_service: "*"
+#     type: floating-image
+#     rationale: Vendor stack uses coordinated channel tags.
+#     risk: A moving tag can resolve to a different image unexpectedly.
+#     compensating_controls:
+#       - Record resolved digests before deployment.
+#       - Validate the complete vendor stack as one change.
+#     owner: homelab-operations
+#     approved_by: pending
+#     approved_on: null
+#     review_on: 2026-09-30
+#     rollback_method: Restore recorded pre-change Compose revision and image digests.
+#     evidence:
+#       - docs/stage0-baseline-findings.md
+
+exceptions: []
