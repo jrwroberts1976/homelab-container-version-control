@@ -169,6 +169,32 @@ A broad `git add -A` remains prohibited. The baseline must use an explicit stagi
 5. checking for plaintext secrets;
 6. deciding which duplicate maintenance scripts are authoritative.
 
+## TestServer Git baseline commit
+
+A controlled local baseline commit was created on **23 August 2026**:
+
+- branch: `baseline/testserver-20260823`;
+- commit: `ebc764c`;
+- message: `Establish TestServer Docker configuration baseline`;
+- files changed: 24;
+- insertions: 837;
+- deletions: 283.
+
+The commit includes the approved Compose/configuration changes, worktree hygiene rules, full maintenance-page controls, Alloy and WUD Compose sources, and the training-page removals already reflected in the inner training repository.
+
+Pre-commit controls passed:
+
+- staged whitespace/error check;
+- explicit path manifest;
+- no broad `git add -A`;
+- no secret-like staged filenames;
+- affected Compose validation;
+- no deployment or container restart.
+
+The only remaining top-level status item is the pre-existing dirty nested repository at `stacks/training-platform/training-platform-manager.backup`. It was not staged.
+
+The baseline branch has not yet been pushed or merged into the Docker repository's main branch.
+
 ## Stage 0 status
 
 Image discovery is substantially complete, but Stage 0 remains open.
