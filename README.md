@@ -1,6 +1,6 @@
 # Homelab Container Version Control
 
-A controlled, observable and reversible way to manage Docker image versions across the homelab.
+A controlled, observable and reversible way to manage Docker and Kubernetes image versions across the homelab.
 
 ## Goals
 
@@ -28,7 +28,7 @@ The project is designed to prevent unexpected Compose-to-runtime downgrades and 
 
 ## Initial scope
 
-The first production scope is the Docker estate on **TestServer** and **ids-01**.
+The first production scope is the Docker estate on **TestServer** and **ids-01**. The operating model now also covers Kubernetes workloads on **k3s-node-01**.
 
 Initial deliverables:
 
@@ -79,6 +79,7 @@ See [Maintenance Page Pilot](pilot/maintenance-page/README.md).
 - [Stage 0 baseline findings](docs/stage0-baseline-findings.md)
 - [Stage 1 policy assessment runbook](docs/stage1-policy-assessment-runbook.md)
 - [Stage 1 registry-image findings](docs/stage1-registry-image-findings.md)
+- [K3s Stage 1 compliance monitoring](docs/k3s-stage1-compliance.md)
 
 ## Repository layout
 
@@ -115,6 +116,24 @@ homelab-container-version-control/
     └── Jenkinsfile
 ```
 
+
+## Kubernetes compliance extension
+
+The same desired-versus-running control model is now operational on `k3s-node-01` through the authoritative [kubernetes-homelab](https://github.com/jrwroberts1976/kubernetes-homelab) repository.
+
+Completed on **23 August 2026**:
+
+- Git-owned, digest-pinned desired state for whoami and Homelab Defender;
+- pinned K3s, MetalLB and kube-state-metrics installation inputs;
+- read-only correlation of workload declarations with active pod image IDs;
+- ownership classification for Helm, K3s-packaged and kubectl-managed workloads;
+- automated five-minute Prometheus textfile export through node-exporter;
+- central ingestion by Prometheus on `ids-01`;
+- 16 active container instances assessed: 3 digest-pinned and 13 explicitly version-tagged;
+- zero floating images, digest drift, unknown ownership or unready active containers.
+
+Grafana is the notification control plane. K3s compliance alert rules remain the next controlled step; they are not yet recorded as complete.
+
 ## Current status
 
 Stage 0 completed on **23 August 2026**.
@@ -134,6 +153,6 @@ Stage 1 completed on **23 August 2026**, ahead of its original planning window. 
 
 Local-build provenance is also reconciled. BirdNET exporter, CrowdSec exporter, Engineering Portfolio and the Projects site all report `revision-match` against clean authoritative source. Jenkins remains the sole documented `no-git-source` exception. Guarded image adoptions passed container-health, HTTP or monitoring validation, and explicit rollback images remain retained.
 
-**Stage 2 — Secrets foundation is next.** Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
+**Docker Stage 2 — Secrets foundation is next.** In parallel, the K3s extension has completed automated inventory and central Prometheus ingestion; Grafana compliance alerts are next. Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
 
 See [Stage 0 baseline findings](docs/stage0-baseline-findings.md) and the [project tracker](https://github.com/jrwroberts1976/homelab-container-version-control/issues/1).
