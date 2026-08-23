@@ -44,6 +44,20 @@ Target initial production completion: **16 October 2026**
 - Critical services have a known Compose source and rollback starting point.
 - Secret locations and delivery methods are known.
 
+### Completion status
+
+Stage 0 passed on **23 August 2026**.
+
+Final evidence:
+
+- 61 containers inventoried across both hosts;
+- zero unmanaged containers;
+- zero registry-image drift;
+- five TestServer local builds classified by source provenance;
+- TestServer names-only secret-delivery inventory completed across 30 containers;
+- authoritative TestServer Compose baseline merged;
+- obsolete stopped services retired only after replacement or route validation.
+
 ## Stage 1 — Git control and policy
 
 ### Deliverables

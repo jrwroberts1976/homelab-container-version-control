@@ -1,219 +1,144 @@
 # Stage 0 Baseline Findings
 
-Baseline date: **23 August 2026**
+Baseline completed: **23 August 2026**
 
-Scope:
+## Scope and safety
 
-- `ids-01`
-- `TestServer`
+Stage 0 covered the Docker estates on `ids-01` and `TestServer`.
 
-Collector: `scripts/inventory-images.sh` from PR #4.
+The following read-only collectors were used:
 
-The collector is read-only. No images were pulled and no containers were restarted or recreated during discovery.
+- `scripts/inventory-images.sh` for Compose ownership, declared images and runtime drift;
+- `scripts/local-build-provenance.sh` for local-build source provenance;
+- `scripts/secret-delivery-inventory.sh` for names-only secret-delivery classification.
 
-## Estate summary
+The collectors do not pull or build images, restart containers, print secret values, or read secret-file contents.
 
-| Host | Containers | Compose-resolved | Local builds | Unmanaged | Reference drift |
+## Final estate summary
+
+| Host | Containers | Registry-image services | Local builds | Unmanaged | Registry-image drift |
 |---|---:|---:|---:|---:|---:|
 | ids-01 | 31 | 31 | 0 | 0 | 0 |
-| TestServer | 32 | 28 | 3 | 1 | 3 |
-| **Total** | **63** | **59** | **3** | **1** | **3** |
+| TestServer | 30 | 25 | 5 | 0 | 0 |
+| **Total** | **61** | **56** | **5** | **0** | **0** |
 
-## ids-01 findings
+The earlier 63-container discovery snapshot changed during controlled cleanup:
 
-- All 31 containers have a current Compose source.
-- No declared-versus-running image drift was detected.
-- No unmanaged containers were detected.
-- 11 declarations use explicit version tags.
-- 20 declarations use floating references.
-- Most floating references belong to the vendor-supplied Greenbone Community Edition stack.
+- `birdnet-exporter` was adopted into the `birdnet-go` Compose project;
+- the obsolete stopped `asus-exporter` container was retired after its systemd/textfile replacement was verified;
+- the inactive `training-platform` container and Compose definition were retired with recovery documentation.
 
-The Greenbone floating references require policy review. They must not be mass-pinned without checking the vendor's supported update and feed-container model.
+No active service was removed without replacement or pre-retirement validation.
 
-## TestServer findings
+## Image reconciliation
 
-- 28 registry-image services resolve from current Compose configuration.
-- Three services are Compose-managed local builds.
-- One container is not currently associated with Compose metadata.
-- One service is digest-pinned.
-- 24 services use explicit version tags.
-- Four services use floating declarations.
-- Three services have confirmed image-reference drift.
+Three TestServer declarations were older than their verified running creation references:
 
-## Confirmed silent-downgrade risks
+| Service | Previous declaration | Reconciled declaration |
+|---|---|---|
+| Dozzle | `amir20/dozzle:v10.7.1` | `amir20/dozzle:v10.7.2` |
+| LibreSpeed | `ghcr.io/librespeed/speedtest:6.1.0` | `ghcr.io/librespeed/speedtest:6.2.1` |
+| Homepage | `ghcr.io/gethomepage/homepage:v1.12.2` | `ghcr.io/gethomepage/homepage:v2.0.0` |
 
-The current Compose declarations are older than the image references used to create the running containers.
+The reconciliation changed desired state only. Compose validation passed, no containers were restarted, and the final inventory reports zero registry-image drift.
 
-| Service | Compose file | Current declaration | Running creation reference | Running image ID | Runtime health |
-|---|---|---|---|---|---|
-| Dozzle | `stacks/management/docker-compose.yml` | `amir20/dozzle:v10.7.1` | `amir20/dozzle:v10.7.2` | `sha256:f1480337d833...` | running; no healthcheck |
-| LibreSpeed | `stacks/availability/docker-compose.yml` | `ghcr.io/librespeed/speedtest:6.1.0` | `ghcr.io/librespeed/speedtest:6.2.1` | `sha256:2378d760d872...` | running; healthy |
-| Homepage | `stacks/dashboards/docker-compose.yml` | `ghcr.io/gethomepage/homepage:v1.12.2` | `ghcr.io/gethomepage/homepage:v2.0.0` | `sha256:c6194a6fea8a...` | running; healthy |
+## Compose ownership and cleanup
 
-These three declarations were reconciled on **23 August 2026** to the verified running references. All three Compose files passed `docker compose config --quiet`, and the post-change inventory reported zero `yes-reference` findings. No containers were restarted during reconciliation.
+### BirdNET exporter
 
-The reconciled declarations are now committed and merged into the authoritative TestServer Docker baseline.
+The previously unmanaged `birdnet-exporter` was rebuilt and recreated through the authoritative `birdnet-go` Compose definition.
 
-### Operational control
+Acceptance evidence:
 
-- Do not run an unreviewed `docker compose up -d` against these stacks.
-- Retain the recorded running image IDs as rollback evidence.
-- Fast-forward the TestServer checkout to the merged baseline before further version-control work.
-- Re-run the image inventory after updating the checkout; this verification must not recreate containers.
+- Compose project: `birdnet-go`;
+- Compose service: `birdnet-exporter`;
+- Prometheus target `birdnet-exporter:9105`: up;
+- BirdNET metrics preserved;
+- prior image retained with a rollback tag;
+- temporary stopped rollback container removed after validation.
 
-## Local-build services
+### ASUS exporter
 
-These services use Compose `build:` rather than a registry image declaration:
+The stopped Docker `asus-exporter` was superseded by `asus-router-temp.timer` and node-exporter textfile metrics.
 
-- `projects-jrwroberts-co-uk`
-- `crowdsec-exporter`
-- `asus-exporter`
+Before retirement:
 
-Image-tag drift is not sufficient for local builds. A later collector must record:
+- the systemd collector was healthy and running every minute;
+- all three routers reported `asus_router_up = 1`;
+- Prometheus exposed the replacement metrics;
+- no alert or dashboard depended on the old exporter.
 
-- build context;
-- Dockerfile path;
-- source Git commit;
-- whether the source worktree was dirty;
-- build timestamp and image ID;
-- relevant build arguments without secret values.
+The obsolete Compose service, scrape job and stopped container were removed. The previous image remains rollback-tagged.
 
-## Unmanaged container
+### Training Platform
 
-`birdnet-exporter` has no current Compose project/service metadata.
+The stopped `training-platform` container had no listener, no Nginx Proxy Manager route, and its public path returned HTTP 404.
 
-Required investigation:
+Its active Compose definition was removed, a retirement/recovery document was committed to `docker-env`, and the previous image remains rollback-tagged.
 
-1. identify its Dockerfile/build context;
-2. locate the intended Compose service;
-3. determine whether it is an orphan from an earlier project recreation;
-4. bring it under an authoritative Compose source or record an approved exception.
+## Local-build provenance
 
-## Source-control readiness finding
+Five active Compose local builds remain:
 
-The TestServer Docker repository at `/home/james/docker` contains extensive tracked and untracked changes.
+| Service | State | Source assessment |
+|---|---|---|
+| `projects-jrwroberts-co-uk` | running | source clean; no OCI revision label |
+| `crowdsec-exporter` | running | source clean; no OCI revision label |
+| `birdnet-exporter` | running | source clean; no OCI revision label |
+| `engineering-portfolio` | running | source dirty; no OCI revision label |
+| `jenkins` | running | build source not associated with a Git worktree; image revision label present |
 
-The modified files include all three drifted Compose files:
+These are not treated as tag drift. Stage 1 must define provenance and revision-label requirements for local builds.
 
-- `stacks/management/docker-compose.yml`
-- `stacks/availability/docker-compose.yml`
-- `stacks/dashboards/docker-compose.yml`
+## Secret-delivery inventory
 
-There are also many backup/autosync files and unrelated stack changes.
+The corrected names-only collector was validated against all 30 TestServer containers.
 
-This is a deployment-automation blocker. Automation must not overwrite or broadly commit this worktree. Reconciliation must:
+| Delivery classification | Containers |
+|---|---:|
+| Environment variable | 4 |
+| No sensitive method detected | 26 |
+| Compose secret | 0 |
+| Sensitive mount | 0 |
+| Sensitive build argument | 0 |
 
-1. preserve unrelated modifications;
-2. change only the exact approved image line;
-3. validate the affected Compose file;
-4. show a narrow diff before commit;
-5. separate backup/generated files through repository hygiene rules;
-6. establish a clean authoritative Git baseline before Renovate is enabled.
+Environment-variable names detected:
 
-## Worktree hygiene progress
+| Service | Name |
+|---|---|
+| `autokuma` | `AUTOKUMA__KUMA__PASSWORD` |
+| `librespeed` | `PASSWORD` |
+| `duckdns` | `TOKEN` |
+| `cloudflare-ddns` | `CLOUDFLARE_API_TOKEN` |
 
-A non-destructive hygiene pass was completed on **23 August 2026**.
+No values were recorded. Public `PUBLIC_GRAFANA_*` build arguments were correctly excluded after host validation.
 
-Targeted ignore rules were added for:
+These four services are inputs to Stage 2 migration planning; environment delivery remains an explicit exception until application support and migration impact are assessed.
 
-- `*.bak` and `*.bak-*`;
-- `*.backup` and `*.backup-*`;
-- `*.pre-*`;
-- `*.autosync-*`;
-- dated `engineering-portfolio-backup-*` trees;
-- dated `engineering-portfolio-old-*` trees.
+## Git baseline
 
-No files were deleted, staged or committed.
+The authoritative TestServer Docker baseline was merged into `docker-env/main` through PR #1.
 
-### Result
+Subsequent controlled changes were merged separately:
 
-| Worktree category | Before hygiene | After hygiene |
-|---|---:|---:|
-| Total visible status entries | 394 | 31 |
-| Backup/autosync artifacts removed from status | 310 | 0 visible |
-| Archived portfolio-tree entries removed from status | 54 | 0 visible |
-| Tracked modifications | 12 | 13, including `.gitignore` |
-| Tracked deletions | 6 | 6 |
-| Operational untracked candidates | 12 | 12 |
+- BirdNET exporter Compose adoption: docker-env PR #2;
+- ASUS exporter retirement: docker-env PR #3;
+- Training Platform retirement: docker-env PR #4.
 
-The remaining untracked candidates are:
+The only residual top-level status item is the deliberately excluded dirty nested backup repository at `stacks/training-platform/training-platform-manager.backup`.
 
-- root maintenance enable/disable scripts;
-- TestServer Alloy Compose source;
-- `engineering-portfolio-git/`;
-- Jenkins Dockerfile and Compose placeholders;
-- maintenance-page scripts, change metadata and Nginx configuration;
-- training-platform `.gitignore`;
-- WUD Compose source.
+## Stage 0 exit decision
 
-### Jenkins placeholder finding
+**Stage 0 passed on 23 August 2026.**
 
-The untracked files below are both currently zero bytes:
+Exit evidence:
 
-- `stacks/jenkins/Dockerfile`;
-- `stacks/jenkins/docker-compose.yml`.
+- every running container is represented in inventory;
+- all running containers have authoritative Compose ownership;
+- registry-image drift is zero;
+- local builds have source-provenance classifications;
+- TestServer secret-delivery methods were inventoried without recording values;
+- rollback images were retained for controlled retirements;
+- the authoritative TestServer Git baseline is merged.
 
-They must not be committed as valid Jenkins deployment configuration. They require reconstruction from the active Jenkins deployment or removal from the staging manifest after confirming they are unused placeholders.
-
-### Baseline-commit control
-
-A broad `git add -A` remains prohibited. The baseline must use an explicit staging manifest after:
-
-1. reviewing the six tracked training-document deletions;
-2. checking the 12 operational candidates;
-3. validating all changed Compose files;
-4. checking for nested repositories;
-5. checking for plaintext secrets;
-6. deciding which duplicate maintenance scripts are authoritative.
-
-## TestServer Git baseline commit
-
-A controlled local baseline commit was created on **23 August 2026**:
-
-- branch: `baseline/testserver-20260823`;
-- commit: `ebc764c`;
-- message: `Establish TestServer Docker configuration baseline`;
-- files changed: 24;
-- insertions: 837;
-- deletions: 283.
-
-The commit includes the approved Compose/configuration changes, worktree hygiene rules, full maintenance-page controls, Alloy and WUD Compose sources, and the training-page removals already reflected in the inner training repository.
-
-Pre-commit controls passed:
-
-- staged whitespace/error check;
-- explicit path manifest;
-- no broad `git add -A`;
-- no secret-like staged filenames;
-- affected Compose validation;
-- no deployment or container restart.
-
-The only remaining top-level status item is the pre-existing dirty nested repository at `stacks/training-platform/training-platform-manager.backup`. It was not staged.
-
-The baseline was reviewed and merged through [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1).
-
-- candidate commit: `ebc764c5051614ea4c8dac6311105a294188c74b`;
-- merge commit: `eb6ce499e722333f45719b44ae34053b33b6ef22`;
-- authoritative branch: `docker-env/main`;
-- GitHub workflow checks: none configured;
-- acceptance evidence: staged-content checks, Compose validation, inventory reconciliation and manual PR review.
-
-Remaining host verification:
-
-1. fast-forward the TestServer checkout to `origin/main`;
-2. confirm the only residual worktree item is the deliberately excluded nested backup repository;
-3. rerun the inventory without pulling images or recreating containers;
-4. retain the output as the merged-baseline evidence.
-
-## Stage 0 status
-
-Image discovery is substantially complete, but Stage 0 remains open.
-
-Remaining exit-gate work:
-
-- fast-forward TestServer to the merged authoritative baseline and rerun inventory;
-- map `birdnet-exporter`;
-- add local-build provenance collection;
-- review floating-image exceptions;
-- complete the secrets delivery-method inventory;
-- establish a clean Git baseline for the host Compose repository.
+Stage 1 now owns image-version policy, downgrade controls, exception records, local-build provenance rules and rollback metadata requirements.
