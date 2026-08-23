@@ -78,8 +78,11 @@ mapfile -t changed < <(
 
     echo
     echo "===== NESTED GIT WORKTREES ====="
-    find "$REPO" -path "$REPO/.git" -prune -o \
-        -type d -name .git -print 2>/dev/null |
+    {
+        find "$REPO" -path "$REPO/.git" -prune -o \
+            -type d -name .git -print 2>/dev/null ||
+        true
+    } |
         sed "s#^$REPO/##" |
         sort
 
