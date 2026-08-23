@@ -113,8 +113,19 @@ homelab-container-version-control/
 
 ## Current status
 
-The Stage 0 collector has now inventoried **63 containers** across ids-01 and TestServer. ids-01 has no detected runtime drift. TestServer's three confirmed image-reference mismatches were reconciled without restarting containers; three local-build services still require provenance checks and one unmanaged container requires mapping.
+Stage 0 completed on **23 August 2026**.
 
-The controlled 24-file TestServer baseline was reviewed and merged through [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1). Merge commit `eb6ce499e722333f45719b44ae34053b33b6ef22` is now the authoritative `docker-env/main` baseline. The post-change inventory reports zero registry-image drift.
+The final estate contains **61 containers** across ids-01 and TestServer:
 
-See [Stage 0 baseline findings](docs/stage0-baseline-findings.md). General automated production deployment remains disabled until TestServer is fast-forwarded to the merged baseline, the remaining inventory exceptions are resolved, secrets controls are complete, and validation/rollback gates are operational.
+- ids-01: 31 Compose-managed containers with no detected reference drift;
+- TestServer: 30 Compose-managed containers, comprising 25 registry-image services and five local builds;
+- zero unmanaged containers;
+- zero registry-image drift.
+
+The TestServer baseline and subsequent BirdNET adoption, obsolete ASUS exporter retirement, and inactive Training Platform retirement are merged into the authoritative `docker-env/main` branch.
+
+The names-only secret-delivery inventory assessed all 30 TestServer containers. Four services currently receive sensitive configuration through environment variables; no values or secret-file contents were recorded.
+
+Stage 1 is now active and will formalise image pinning, downgrade protection, exceptions, local-build provenance and rollback metadata requirements. Automated production deployment remains disabled until the later validation, secrets and rollback gates are satisfied.
+
+See [Stage 0 baseline findings](docs/stage0-baseline-findings.md) and the [project tracker](https://github.com/jrwroberts1976/homelab-container-version-control/issues/1).
