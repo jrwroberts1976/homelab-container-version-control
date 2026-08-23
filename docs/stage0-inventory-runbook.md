@@ -102,6 +102,32 @@ Before Stage 0 is complete:
 
 1. Every running container on both hosts appears exactly once.
 2. Every critical service has a readable Compose source.
-3. Every `unmanaged`, `floating`, `yes-reference`, `yes-image`, `not-assessed-local-build` and `not-locally-resolvable` row is reviewed.
+3. Every `unmanaged`, `floating`, `yes-reference`, `yes-image`, `not-assessed-local-build` and `not-locally-resolvable` row is reviewed. Services declaring both `image:` and `build:` are treated as local builds.
 4. Known exceptions are recorded in `policy/exceptions.yml`.
 5. Secret delivery methods are inventoried separately without collecting values.
+
+## Local-build provenance
+
+Run this after the image inventory identifies `not-assessed-local-build` services:
+
+```bash
+sudo bash scripts/local-build-provenance.sh TestServer \\
+  | sudo tee /var/tmp/local-build-provenance-testserver.tsv
+
+column -t -s $'\\t' \\
+  /var/tmp/local-build-provenance-testserver.tsv
+```
+
+The collector processes all existing Compose containers with a `build:` declaration, including stopped containers. It records the resolved build context and Dockerfile, Dockerfile SHA-256, build-argument names, source Git root and commit, scoped dirty state, running image ID, container state and OCI provenance labels. It never reports build-argument values or container environment values.
+
+Assessment values:
+
+| Assessment | Meaning |
+|---|---|
+| `revision-match` | The image embeds an OCI revision matching the current source commit |
+| `revision-mismatch` | The embedded image revision differs from the current source commit |
+| `unverified-no-revision-label` | Source is clean, but the image does not embed a revision |
+| `source-dirty` | Files under the build context differ from the recorded Git commit |
+| `no-git-source` | The resolved build context is not inside a Git worktree |
+
+A clean source tree without an embedded revision is useful evidence, but does not prove which commit produced the running image. Stage 1 should add OCI revision/source labels and deterministic build metadata before automated local-image deployment.
