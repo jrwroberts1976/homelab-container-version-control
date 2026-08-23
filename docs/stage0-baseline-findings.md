@@ -193,7 +193,17 @@ Pre-commit controls passed:
 
 The only remaining top-level status item is the pre-existing dirty nested repository at `stacks/training-platform/training-platform-manager.backup`. It was not staged.
 
-The baseline branch has not yet been pushed or merged into the Docker repository's main branch.
+The baseline branch was pushed to `jrwroberts1976/docker-env` and is under review in [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1).
+
+Current merge gate:
+
+- review the 24-file baseline diff;
+- confirm no repository checks fail;
+- merge PR #1 into `main`;
+- update TestServer to the merged `main` revision without recreating containers;
+- rerun the inventory against the merged authoritative state.
+
+Until that gate completes, commit `ebc764c5051614ea4c8dac6311105a294188c74b` remains the approved candidate baseline rather than the main-branch source of truth.
 
 ## Stage 0 status
 
