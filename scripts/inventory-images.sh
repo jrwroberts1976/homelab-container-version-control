@@ -82,7 +82,11 @@ compose_declared_image() {
     fi
 
     jq -er --arg service "$service" \
-        '.services[$service].image // empty' \
+        '.services[$service] |
+         if .image then .image
+         elif .build then "__LOCAL_BUILD__"
+         else empty
+         end' \
         <<<"$config_json"
 }
 
@@ -126,8 +130,13 @@ for container_id in "${containers[@]}"; do
     if resolved="$(
         compose_declared_image "$service" "$config_files" "$working_dir"
     )"; then
-        desired_image="$resolved"
-        declaration_source="compose"
+        if [[ "$resolved" == "__LOCAL_BUILD__" ]]; then
+            desired_image="$creation_image"
+            declaration_source="local-build"
+        else
+            desired_image="$resolved"
+            declaration_source="compose"
+        fi
     fi
 
     if [[ -n "$project" && -n "$service" ]]; then
@@ -136,7 +145,9 @@ for container_id in "${containers[@]}"; do
         management="unmanaged"
     fi
 
-    if is_floating "$desired_image"; then
+    if [[ "$declaration_source" == "local-build" ]]; then
+        version_policy="local-build"
+    elif is_floating "$desired_image"; then
         version_policy="floating"
     elif [[ "$desired_image" == *@sha256:* ]]; then
         version_policy="digest-pinned"
@@ -152,16 +163,34 @@ for container_id in "${containers[@]}"; do
     )"
 
     drift="unknown"
-    if desired_id="$(
+
+    desired_normalized="$desired_image"
+    creation_normalized="$creation_image"
+
+    if [[ "${desired_normalized##*/}" != *:* ]] &&
+       [[ "$desired_normalized" != *@* ]]; then
+        desired_normalized="${desired_normalized}:latest"
+    fi
+
+    if [[ "${creation_normalized##*/}" != *:* ]] &&
+       [[ "$creation_normalized" != *@* ]]; then
+        creation_normalized="${creation_normalized}:latest"
+    fi
+
+    if [[ "$declaration_source" == "local-build" ]]; then
+        drift="not-assessed-local-build"
+    elif [[ "$desired_normalized" != "$creation_normalized" ]]; then
+        drift="yes-reference"
+    elif desired_id="$(
         docker image inspect "$desired_image" \
             --format '{{.Id}}' 2>/dev/null
     )"; then
         if [[ "$desired_id" == "$running_image_id" ]]; then
             drift="no"
         else
-            drift="yes"
+            drift="yes-image"
         fi
-    elif [[ "$desired_image" == "$creation_image" ]]; then
+    else
         drift="not-locally-resolvable"
     fi
 
