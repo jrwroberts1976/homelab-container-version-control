@@ -73,6 +73,8 @@ See [Maintenance Page Pilot](pilot/maintenance-page/README.md).
 - [Image version policy](policy/image-version-policy.md)
 - [Rollback policy](policy/rollback-policy.md)
 - [Maintenance Page Pilot](pilot/maintenance-page/README.md)
+- [Stage 0 inventory runbook](docs/stage0-inventory-runbook.md)
+- [Stage 0 baseline findings](docs/stage0-baseline-findings.md)
 
 ## Repository layout
 
@@ -111,4 +113,8 @@ homelab-container-version-control/
 
 ## Current status
 
-The architecture, policy and staged plan are now on `main`. The Engineering Portfolio deployment and maintenance-page workflow have provided the first production evidence for the guarded-deployment design. Stage 0 discovery and inventory remain the next project focus; no general automated production deployment will be enabled until the inventory, secrets foundation, validation gate and rollback controls are complete.
+The Stage 0 collector has now inventoried **63 containers** across ids-01 and TestServer. ids-01 has no detected runtime drift. TestServer's three confirmed image-reference mismatches were reconciled without restarting containers; three local-build services still require provenance checks and one unmanaged container requires mapping.
+
+The controlled 24-file TestServer baseline was reviewed and merged through [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1). Merge commit `eb6ce499e722333f45719b44ae34053b33b6ef22` is now the authoritative `docker-env/main` baseline. The post-change inventory reports zero registry-image drift.
+
+See [Stage 0 baseline findings](docs/stage0-baseline-findings.md). General automated production deployment remains disabled until TestServer is fast-forwarded to the merged baseline, the remaining inventory exceptions are resolved, secrets controls are complete, and validation/rollback gates are operational.
