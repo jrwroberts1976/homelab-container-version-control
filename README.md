@@ -77,6 +77,7 @@ See [Maintenance Page Pilot](pilot/maintenance-page/README.md).
 - [Maintenance Page Pilot](pilot/maintenance-page/README.md)
 - [Stage 0 inventory runbook](docs/stage0-inventory-runbook.md)
 - [Stage 0 baseline findings](docs/stage0-baseline-findings.md)
+- [Stage 1 policy assessment runbook](docs/stage1-policy-assessment-runbook.md)
 
 ## Repository layout
 
