@@ -52,17 +52,14 @@ The current Compose declarations are older than the image references used to cre
 
 These three declarations were reconciled on **23 August 2026** to the verified running references. All three Compose files passed `docker compose config --quiet`, and the post-change inventory reported zero `yes-reference` findings. No containers were restarted during reconciliation.
 
-The files remain uncommitted within the wider dirty TestServer Docker worktree and therefore still require a controlled baseline commit.
+The reconciled declarations are now committed and merged into the authoritative TestServer Docker baseline.
 
-### Required response
+### Operational control
 
-Until the reconciled files are committed into the authoritative baseline:
-
-- do not run an unreviewed `docker compose up -d` against these stacks;
-- retain the current running image IDs as rollback evidence;
-- review the complete stack diffs, which also contain prior pinning and Watchtower-removal work;
-- preserve unrelated worktree changes;
-- commit the approved desired state through a narrow, reviewed baseline change.
+- Do not run an unreviewed `docker compose up -d` against these stacks.
+- Retain the recorded running image IDs as rollback evidence.
+- Fast-forward the TestServer checkout to the merged baseline before further version-control work.
+- Re-run the image inventory after updating the checkout; this verification must not recreate containers.
 
 ## Local-build services
 
@@ -193,17 +190,20 @@ Pre-commit controls passed:
 
 The only remaining top-level status item is the pre-existing dirty nested repository at `stacks/training-platform/training-platform-manager.backup`. It was not staged.
 
-The baseline branch was pushed to `jrwroberts1976/docker-env` and is under review in [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1).
+The baseline was reviewed and merged through [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1).
 
-Current merge gate:
+- candidate commit: `ebc764c5051614ea4c8dac6311105a294188c74b`;
+- merge commit: `eb6ce499e722333f45719b44ae34053b33b6ef22`;
+- authoritative branch: `docker-env/main`;
+- GitHub workflow checks: none configured;
+- acceptance evidence: staged-content checks, Compose validation, inventory reconciliation and manual PR review.
 
-- review the 24-file baseline diff;
-- confirm no repository checks fail;
-- merge PR #1 into `main`;
-- update TestServer to the merged `main` revision without recreating containers;
-- rerun the inventory against the merged authoritative state.
+Remaining host verification:
 
-Until that gate completes, commit `ebc764c5051614ea4c8dac6311105a294188c74b` remains the approved candidate baseline rather than the main-branch source of truth.
+1. fast-forward the TestServer checkout to `origin/main`;
+2. confirm the only residual worktree item is the deliberately excluded nested backup repository;
+3. rerun the inventory without pulling images or recreating containers;
+4. retain the output as the merged-baseline evidence.
 
 ## Stage 0 status
 
@@ -211,7 +211,7 @@ Image discovery is substantially complete, but Stage 0 remains open.
 
 Remaining exit-gate work:
 
-- commit the reconciled TestServer desired-state changes into the authoritative baseline;
+- fast-forward TestServer to the merged authoritative baseline and rerun inventory;
 - map `birdnet-exporter`;
 - add local-build provenance collection;
 - review floating-image exceptions;
