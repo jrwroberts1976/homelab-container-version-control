@@ -130,6 +130,10 @@ The TestServer baseline and subsequent BirdNET adoption, obsolete ASUS exporter 
 
 The names-only secret-delivery inventory assessed all 30 TestServer containers. Four services currently receive sensitive configuration through environment variables; no values or secret-file contents were recorded.
 
-Stage 1 is active. Registry-image policy work is reconciled: TestServer has 2 digest-compliant and 23 version-tagged services; ids-01 has 11 version-tagged services and 20 Greenbone containers covered by approved exception `EX-2026-001`. There is no registry-image drift, unmanaged container or unapproved floating reference. The remaining Stage 1 workload is local-build provenance. Automated production deployment remains disabled until the later validation, secrets and rollback gates are satisfied.
+Stage 1 completed on **23 August 2026**, ahead of its original planning window. Registry-image policy is reconciled: TestServer has 2 digest-compliant and 23 version-tagged services; ids-01 has 11 version-tagged services and 20 Greenbone containers covered by approved exception `EX-2026-001`. There is no registry-image drift, unmanaged container or unapproved floating reference.
+
+Local-build provenance is also reconciled. BirdNET exporter, CrowdSec exporter, Engineering Portfolio and the Projects site all report `revision-match` against clean authoritative source. Jenkins remains the sole documented `no-git-source` exception. Guarded image adoptions passed container-health, HTTP or monitoring validation, and explicit rollback images remain retained.
+
+**Stage 2 — Secrets foundation is next.** Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
 
 See [Stage 0 baseline findings](docs/stage0-baseline-findings.md) and the [project tracker](https://github.com/jrwroberts1976/homelab-container-version-control/issues/1).
