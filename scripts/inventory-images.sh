@@ -66,7 +66,7 @@ compose_declared_image() {
 
         [[ -r "$file" ]] || return 1
         args+=(--file "$file")
-    done < <(printf '%s' "$config_files" | tr ',' '\n')
+    done < <(printf '%s\n' "$config_files" | tr ',' '\n')
 
     (("${#args[@]}" > 0)) || return 1
 
