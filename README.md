@@ -113,8 +113,8 @@ homelab-container-version-control/
 
 ## Current status
 
-The Stage 0 collector has now inventoried **63 containers** across ids-01 and TestServer. ids-01 has no detected runtime drift. TestServer has three confirmed image-reference mismatches that could cause silent downgrade, three local-build services requiring provenance checks and one unmanaged container.
+The Stage 0 collector has now inventoried **63 containers** across ids-01 and TestServer. ids-01 has no detected runtime drift. TestServer's three confirmed image-reference mismatches were reconciled without restarting containers; three local-build services still require provenance checks and one unmanaged container requires mapping.
 
-The TestServer worktree was reduced from 394 visible entries to 31 without deleting operational evidence. A controlled 24-file baseline commit was created and pushed for review in [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1). The three registry-image mismatches are reconciled in that candidate baseline, and the post-change inventory reports zero registry-image drift.
+The controlled 24-file TestServer baseline was reviewed and merged through [docker-env PR #1](https://github.com/jrwroberts1976/docker-env/pull/1). Merge commit `eb6ce499e722333f45719b44ae34053b33b6ef22` is now the authoritative `docker-env/main` baseline. The post-change inventory reports zero registry-image drift.
 
-See [Stage 0 baseline findings](docs/stage0-baseline-findings.md). General automated production deployment remains disabled until the baseline is merged, remaining inventory exceptions are resolved, secrets controls are complete, and validation/rollback gates are operational.
+See [Stage 0 baseline findings](docs/stage0-baseline-findings.md). General automated production deployment remains disabled until TestServer is fast-forwarded to the merged baseline, the remaining inventory exceptions are resolved, secrets controls are complete, and validation/rollback gates are operational.
