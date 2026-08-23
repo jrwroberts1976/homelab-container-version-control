@@ -2,7 +2,7 @@
 
 ## Project objective
 
-Establish end-to-end Docker image version control across TestServer and ids-01, with Git-controlled desired state, safe update proposals, security validation, secrets management, staged deployment, deterministic rollback and runtime compliance monitoring.
+Establish end-to-end container image version control across the Docker estate on TestServer and ids-01 and the Kubernetes estate on k3s-node-01, with Git-controlled desired state, safe update proposals, security validation, staged deployment, deterministic rollback and runtime compliance monitoring.
 
 ## Planning approach
 
@@ -23,6 +23,22 @@ Target initial production completion: **16 October 2026**
 | 5. Pilot go-live | 26 Sep–2 Oct | Pattern proven; formal gate pending | Guarded deployment of selected low-risk services | Health and rollback tests pass for pilot services |
 | 6. Production rollout | 3–9 Oct | Planned | Extend process to critical/BAU services in controlled batches | Critical service rollback and recovery demonstrated |
 | 7. Observability & closure | 10–16 Oct | Planned | Grafana/Prometheus compliance view, alerting, runbooks and handover | Runtime drift visible; operational runbook accepted |
+
+
+## Kubernetes extension timeline
+
+The Kubernetes workstream applies the same controls without changing the Docker stage gates.
+
+| Stage | Completed | Outcome | Evidence |
+|---|---|---|---|
+| K0. Ownership and baseline | 23 Aug 2026 | K3s, Helm and application desired-state ownership recorded | `kubernetes-homelab` main branch and Stage 0 inventory |
+| K1. Image policy and provenance | 23 Aug 2026 | Active declarations classified; pinned images correlated with runtime digests | 3 digest-pinned and 13 version-tagged active instances |
+| K2. Automated compliance metrics | 23 Aug 2026 | Five-minute inventory export through node-exporter | `k3s-image-compliance.timer`, scrape error `0` |
+| K3. Central monitoring | 23 Aug 2026 | Compliance series ingested by Prometheus on ids-01 | target up, success `1`, drift `0`, fresh timestamp |
+| K4. Alerting | Next | Grafana-managed stale, failure, drift and readiness alerts | Pending controlled rule deployment |
+| K5. GitOps and admission policy | Planned | Continuous reconciliation and preventive policy | Future stage |
+
+See [K3s Stage 1 compliance monitoring](k3s-stage1-compliance.md).
 
 ## Stage 0 — Discovery and baseline
 
@@ -210,6 +226,11 @@ Initial metrics should include:
 - `homelab_docker_image_managed`
 - `homelab_docker_secret_policy_compliant`
 - `homelab_docker_inventory_last_success_timestamp`
+- `k3s_image_inventory_success`
+- `k3s_image_inventory_timestamp_seconds`
+- `k3s_image_workload_container_ready`
+- `k3s_image_digest_drift`
+- `k3s_image_assessment_instances`
 
 ### Grafana
 
@@ -227,7 +248,7 @@ Create a Docker Version Control dashboard showing:
 
 ### Closure criteria
 
-- Runtime drift produces a visible alert.
+- Docker and Kubernetes runtime drift produce visible alerts.
 - Inventory refresh is automated.
 - Update, deploy and rollback runbooks are documented.
 - Secrets recovery procedure has been tested.
