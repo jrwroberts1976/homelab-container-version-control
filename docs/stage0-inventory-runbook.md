@@ -84,11 +84,14 @@ Change the filename to inspect the TestServer result.
 | `running_repo_digests` | Registry digests known for the running image |
 | `management` | Whether the container is Compose-managed and whether the current Compose declaration could be resolved |
 | `version_policy` | `floating`, `version-tagged` or `digest-pinned` |
-| `drift` | Whether the locally resolved desired reference points at a different image ID from the running container |
+| `drift` | `no`, `yes-reference`, `yes-image`, `not-assessed-local-build` or `not-locally-resolvable` |
 
 ## Interpretation limits
 
 - The collector deliberately does not pull images. A remote registry may have moved a floating tag even when the local result says `drift=no`.
+- `yes-reference` means the current Compose reference differs from the reference used to create the container; this can produce an unintended downgrade on recreation.
+- `yes-image` means the reference is unchanged but resolves locally to a different image ID, commonly after a mutable tag moved.
+- `not-assessed-local-build` means the service uses `build:` and requires source/build provenance checks.
 - `not-locally-resolvable` means the desired reference could not be resolved from the host's local image store.
 - Compose interpolation can fail when its required environment file is unavailable. In that case the collector falls back to the container's creation-time image reference and records `compose:runtime-creation`.
 - A version tag without a digest is classified as `version-tagged`; it is more controlled than a floating channel, but it is not immutable.
@@ -99,6 +102,6 @@ Before Stage 0 is complete:
 
 1. Every running container on both hosts appears exactly once.
 2. Every critical service has a readable Compose source.
-3. Every `unmanaged`, `floating`, `drift=yes` and `unknown` row is reviewed.
+3. Every `unmanaged`, `floating`, `yes-reference`, `yes-image`, `not-assessed-local-build` and `not-locally-resolvable` row is reviewed.
 4. Known exceptions are recorded in `policy/exceptions.yml`.
 5. Secret delivery methods are inventoried separately without collecting values.
