@@ -179,6 +179,22 @@ for container_id in "${containers[@]}"; do
 
     if [[ "$declaration_source" == "local-build" ]]; then
         drift="not-assessed-local-build"
+    elif [[ "$desired_image" == *@sha256:* ]]; then
+        desired_digest="${desired_image##*@}"
+        desired_repository="${desired_image%@*}"
+
+        if [[ "${desired_repository##*/}" == *:* ]]; then
+            desired_repository="${desired_repository%:*}"
+        fi
+
+        desired_repo_digest="${desired_repository}@${desired_digest}"
+
+        if tr ',' '\n' <<<"$repo_digests" |
+           grep -Fxq -- "$desired_repo_digest"; then
+            drift="no"
+        else
+            drift="yes-digest"
+        fi
     elif [[ "$desired_normalized" != "$creation_normalized" ]]; then
         drift="yes-reference"
     elif desired_id="$(
