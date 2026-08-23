@@ -43,4 +43,43 @@ version: 1
 #     evidence:
 #       - docs/stage0-baseline-findings.md
 
-exceptions: []
+exceptions:
+  - id: EX-2026-001
+    status: proposed
+    scope:
+      host: ids-01
+      compose_project: greenbone-community-edition
+      compose_service: "*"
+    type: floating-image
+    rationale: >-
+      Greenbone Community Containers use a coordinated rolling-release
+      Compose model. Vendor workflows require using the latest compose.yaml,
+      pulling updated service and feed-data images, and loading feed content
+      through the running daemons. Independently pinning the 20 component
+      containers could break vendor-supported stack and feed coordination.
+    risk: >-
+      A moving tag or untagged image can resolve to a different artifact
+      without the Git declaration changing, and a vendor Compose update can
+      introduce coordinated architecture or database changes.
+    compensating_controls:
+      - Download and review the current vendor compose.yaml before an update.
+      - Treat the complete Greenbone project as one elevated change.
+      - Record every resolved pre-change and candidate image digest.
+      - Capture the current Git revision and database/volume backup evidence.
+      - Validate Compose before pull or recreation.
+      - Verify container health, Greenbone login, scanner readiness and feed status.
+      - Retain pre-change image digests until the acceptance window passes.
+      - Do not allow WUD or another runtime tool to deploy the update directly.
+    owner: homelab-operations
+    approved_by: pending
+    approved_on: null
+    review_on: 2026-09-30
+    rollback_method: >-
+      Restore the recorded pre-change compose revision and exact image
+      digests. Do not downgrade pg-gvm or restore database state without the
+      service-specific backup and compatibility procedure.
+    evidence:
+      - docs/stage0-baseline-findings.md
+      - https://greenbone.github.io/docs/latest/22.4/container/index.html
+      - https://greenbone.github.io/docs/latest/22.4/container/workflows.html
+
