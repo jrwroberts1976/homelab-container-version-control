@@ -134,6 +134,22 @@ Completed on **23 August 2026**:
 
 Grafana is the notification control plane. K3s compliance alert rules remain the next controlled step; they are not yet recorded as complete.
 
+## DietPi operational-state extension
+
+The same source-control principles now cover the adjacent DNS and backup services on **DietPi** without treating the host as part of the Docker container count.
+
+Completed on **23 August 2026**:
+
+- 14 operational scripts and the Pi-hole blocked-query alert application captured from the live host;
+- 18 custom systemd service and timer units recorded;
+- five active Pi-hole adlists exported as declarative recovery input;
+- effective Unbound local overrides stored;
+- safe environment templates added while live credentials, databases, TLS keys, generated metrics and backup state remain excluded;
+- shell, Python, systemd, whitespace and secret-content validation passed;
+- adoption merged into `home-lab-docs/main` through [PR #16](https://github.com/jrwroberts1976/home-lab-docs/pull/16).
+
+This extends recovery and audit coverage for critical DNS operations while preserving the rule that Git stores desired state and source—not runtime databases or plaintext secrets.
+
 ## Current status
 
 Stage 0 completed on **23 August 2026**.

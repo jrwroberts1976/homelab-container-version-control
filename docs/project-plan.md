@@ -40,6 +40,17 @@ The Kubernetes workstream applies the same controls without changing the Docker 
 
 See [K3s Stage 1 compliance monitoring](k3s-stage1-compliance.md).
 
+## DietPi operational-state extension
+
+DietPi is adjacent critical infrastructure rather than part of the Docker/Kubernetes image totals. Its operational source is controlled under the same desired-state, validation and secret-exclusion principles.
+
+| Stage | Completed | Outcome | Evidence |
+|---|---|---|---|
+| D0. Ownership and discovery | 23 Aug 2026 | Pi-hole, Unbound, backup, monitoring and security automation mapped to the live host | Read-only source and systemd inventory |
+| D1. Git adoption | 23 Aug 2026 | 14 operational scripts, alert application, 18 systemd units, five Pi-hole adlists and Unbound overrides captured | `home-lab-docs` PR #16, merge `17a574f` |
+| D2. Secret separation | 23 Aug 2026 | Environment templates retained; live credentials, databases, keys, generated metrics and backup state excluded | Secret-content gate passed |
+| D3. Recovery validation | Next | Prove clean-host restoration from Git-owned source plus protected secret backup | Pending controlled recovery exercise |
+
 ## Stage 0 — Discovery and baseline
 
 ### Deliverables
