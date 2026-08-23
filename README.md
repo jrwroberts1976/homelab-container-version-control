@@ -78,6 +78,7 @@ See [Maintenance Page Pilot](pilot/maintenance-page/README.md).
 - [Stage 0 inventory runbook](docs/stage0-inventory-runbook.md)
 - [Stage 0 baseline findings](docs/stage0-baseline-findings.md)
 - [Stage 1 policy assessment runbook](docs/stage1-policy-assessment-runbook.md)
+- [Stage 1 registry-image findings](docs/stage1-registry-image-findings.md)
 
 ## Repository layout
 
@@ -129,6 +130,6 @@ The TestServer baseline and subsequent BirdNET adoption, obsolete ASUS exporter 
 
 The names-only secret-delivery inventory assessed all 30 TestServer containers. Four services currently receive sensitive configuration through environment variables; no values or secret-file contents were recorded.
 
-Stage 1 is now active and will formalise image pinning, downgrade protection, exceptions, local-build provenance and rollback metadata requirements. Automated production deployment remains disabled until the later validation, secrets and rollback gates are satisfied.
+Stage 1 is active. Registry-image policy work is reconciled: TestServer has 2 digest-compliant and 23 version-tagged services; ids-01 has 11 version-tagged services and 20 Greenbone containers covered by approved exception `EX-2026-001`. There is no registry-image drift, unmanaged container or unapproved floating reference. The remaining Stage 1 workload is local-build provenance. Automated production deployment remains disabled until the later validation, secrets and rollback gates are satisfied.
 
 See [Stage 0 baseline findings](docs/stage0-baseline-findings.md) and the [project tracker](https://github.com/jrwroberts1976/homelab-container-version-control/issues/1).
