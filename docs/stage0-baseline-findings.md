@@ -50,17 +50,19 @@ The current Compose declarations are older than the image references used to cre
 | LibreSpeed | `stacks/availability/docker-compose.yml` | `ghcr.io/librespeed/speedtest:6.1.0` | `ghcr.io/librespeed/speedtest:6.2.1` | `sha256:2378d760d872...` | running; healthy |
 | Homepage | `stacks/dashboards/docker-compose.yml` | `ghcr.io/gethomepage/homepage:v1.12.2` | `ghcr.io/gethomepage/homepage:v2.0.0` | `sha256:c6194a6fea8a...` | running; healthy |
 
-Recreating any of these stacks from the current Compose files may downgrade the service.
+These three declarations were reconciled on **23 August 2026** to the verified running references. All three Compose files passed `docker compose config --quiet`, and the post-change inventory reported zero `yes-reference` findings. No containers were restarted during reconciliation.
+
+The files remain uncommitted within the wider dirty TestServer Docker worktree and therefore still require a controlled baseline commit.
 
 ### Required response
 
-Until reconciliation is complete:
+Until the reconciled files are committed into the authoritative baseline:
 
 - do not run an unreviewed `docker compose up -d` against these stacks;
-- do not treat the running version as automatically approved;
 - retain the current running image IDs as rollback evidence;
-- review release compatibility, particularly the Homepage major-version difference;
-- update desired state only through a reviewed change.
+- review the complete stack diffs, which also contain prior pinning and Watchtower-removal work;
+- preserve unrelated worktree changes;
+- commit the approved desired state through a narrow, reviewed baseline change.
 
 ## Local-build services
 
@@ -117,7 +119,7 @@ Image discovery is substantially complete, but Stage 0 remains open.
 
 Remaining exit-gate work:
 
-- reconcile the three TestServer reference-drift findings;
+- commit the reconciled TestServer desired-state changes into the authoritative baseline;
 - map `birdnet-exporter`;
 - add local-build provenance collection;
 - review floating-image exceptions;
