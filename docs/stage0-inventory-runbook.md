@@ -102,7 +102,7 @@ Before Stage 0 is complete:
 
 1. Every running container on both hosts appears exactly once.
 2. Every critical service has a readable Compose source.
-3. Every `unmanaged`, `floating`, `yes-reference`, `yes-image`, `not-assessed-local-build` and `not-locally-resolvable` row is reviewed.
+3. Every `unmanaged`, `floating`, `yes-reference`, `yes-image`, `not-assessed-local-build` and `not-locally-resolvable` row is reviewed. Services declaring both `image:` and `build:` are treated as local builds.
 4. Known exceptions are recorded in `policy/exceptions.yml`.
 5. Secret delivery methods are inventoried separately without collecting values.
 
@@ -118,7 +118,7 @@ column -t -s $'\\t' \\
   /var/tmp/local-build-provenance-testserver.tsv
 ```
 
-The collector processes running Compose services with a `build:` declaration. It records the resolved build context and Dockerfile, Dockerfile SHA-256, build-argument names, source Git root and commit, scoped dirty state, running image ID and OCI provenance labels. It never reports build-argument values or container environment values.
+The collector processes all existing Compose containers with a `build:` declaration, including stopped containers. It records the resolved build context and Dockerfile, Dockerfile SHA-256, build-argument names, source Git root and commit, scoped dirty state, running image ID, container state and OCI provenance labels. It never reports build-argument values or container environment values.
 
 Assessment values:
 
