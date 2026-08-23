@@ -113,6 +113,62 @@ This is a deployment-automation blocker. Automation must not overwrite or broadl
 5. separate backup/generated files through repository hygiene rules;
 6. establish a clean authoritative Git baseline before Renovate is enabled.
 
+## Worktree hygiene progress
+
+A non-destructive hygiene pass was completed on **23 August 2026**.
+
+Targeted ignore rules were added for:
+
+- `*.bak` and `*.bak-*`;
+- `*.backup` and `*.backup-*`;
+- `*.pre-*`;
+- `*.autosync-*`;
+- dated `engineering-portfolio-backup-*` trees;
+- dated `engineering-portfolio-old-*` trees.
+
+No files were deleted, staged or committed.
+
+### Result
+
+| Worktree category | Before hygiene | After hygiene |
+|---|---:|---:|
+| Total visible status entries | 394 | 31 |
+| Backup/autosync artifacts removed from status | 310 | 0 visible |
+| Archived portfolio-tree entries removed from status | 54 | 0 visible |
+| Tracked modifications | 12 | 13, including `.gitignore` |
+| Tracked deletions | 6 | 6 |
+| Operational untracked candidates | 12 | 12 |
+
+The remaining untracked candidates are:
+
+- root maintenance enable/disable scripts;
+- TestServer Alloy Compose source;
+- `engineering-portfolio-git/`;
+- Jenkins Dockerfile and Compose placeholders;
+- maintenance-page scripts, change metadata and Nginx configuration;
+- training-platform `.gitignore`;
+- WUD Compose source.
+
+### Jenkins placeholder finding
+
+The untracked files below are both currently zero bytes:
+
+- `stacks/jenkins/Dockerfile`;
+- `stacks/jenkins/docker-compose.yml`.
+
+They must not be committed as valid Jenkins deployment configuration. They require reconstruction from the active Jenkins deployment or removal from the staging manifest after confirming they are unused placeholders.
+
+### Baseline-commit control
+
+A broad `git add -A` remains prohibited. The baseline must use an explicit staging manifest after:
+
+1. reviewing the six tracked training-document deletions;
+2. checking the 12 operational candidates;
+3. validating all changed Compose files;
+4. checking for nested repositories;
+5. checking for plaintext secrets;
+6. deciding which duplicate maintenance scripts are authoritative.
+
 ## Stage 0 status
 
 Image discovery is substantially complete, but Stage 0 remains open.
