@@ -1,74 +1,118 @@
 # Image Version Policy
 
-## Policy intent
+## Status
 
-Every production/BAU container must have an explicit and reviewable image-version strategy.
+Stage 1 policy foundation. Enforcement automation is not yet enabled.
 
-## Preferred declaration
+## Intent
 
-Use a human-readable release tag plus immutable digest where the registry/workflow supports it:
+Every production or BAU container must have an explicit, reviewable and reproducible version strategy. Git-controlled Compose is authoritative; runtime state does not silently redefine desired state.
+
+## Declaration classes
+
+### Registry image — preferred
+
+Use a human-readable release tag and immutable digest where the publisher and update workflow support both:
 
 ```yaml
 image: vendor/service:1.2.3@sha256:<digest>
 ```
 
-## Classification
+The tag supports review; the digest fixes the exact artifact.
 
-### Compliant
+### Version-tagged
 
-- explicit release tag;
-- digest pinned where required by policy;
-- running image matches desired declaration.
+An explicit release or date tag without a digest is provisionally compliant when:
 
-### Floating exception
+- the tag is immutable in practice or registry history is monitored;
+- the service has a recorded rollback image ID/digest;
+- digest pinning is not yet supported by the update workflow.
 
-Examples include `latest`, `stable`, date-less channel tags or unversioned image references.
+### Digest-pinned
 
-Floating declarations require:
+A digest-only declaration is reproducible but less readable. It must retain release/version context in the change record.
 
-- written rationale;
-- owner;
-- review date;
-- rollback method;
-- monitoring for digest change.
+### Floating
 
-### Drift
+The following are floating:
 
-Running image/tag/digest differs from the Git-controlled desired state.
+- `latest`;
+- `stable`, `edge`, `main`, `master` or similar moving channels;
+- an untagged image reference;
+- a vendor channel whose content may change without the declaration changing.
 
-Drift must be investigated. Runtime state must not silently redefine desired state.
+Floating references are non-compliant unless covered by an active exception.
 
-## Upgrade policy
+### Local build
 
-- Patch changes: normal validation path.
-- Minor changes: normal validation plus release-note review where risk justifies it.
-- Major changes: elevated change with explicit compatibility and rollback review.
-- Digest-only change under the same tag: treated as a real image change and validated.
+A Compose `build:` service is assessed through source provenance rather than registry-tag drift.
 
-## Downgrade policy
+A compliant local build requires:
 
-Apparent downgrades are denied by default.
+- authoritative build context and Dockerfile;
+- clean source worktree;
+- source Git commit;
+- build timestamp and image ID;
+- OCI `org.opencontainers.image.revision` label matching the source commit;
+- reproducible build arguments by name, with no secret values recorded;
+- rollback image ID retained until acceptance.
 
-A downgrade requires explicit override plus:
+Until these controls are implemented, local builds are reported separately as provenance-unverified, not as registry-image drift.
 
-- reason;
-- known compatible state/data format;
-- rollback target verification;
-- service-specific risk review.
+## Compliance states
 
-## WUD and Renovate
+| State | Meaning |
+|---|---|
+| `compliant` | Declaration satisfies its class and runtime matches desired state |
+| `floating-exception` | Moving reference is covered by an active exception |
+| `drift` | Runtime image/reference differs from Git desired state |
+| `local-build-unverified` | Local build lacks required provenance evidence |
+| `unmanaged` | Running container has no authoritative declaration |
+| `exception-expired` | A required exception has passed its review date |
 
-- WUD is an update signal for running containers.
-- Renovate is the preferred mechanism for proposing controlled Git changes.
-- Neither tool is permitted to bypass Git/validation and silently replace a production image.
+## Change classification
+
+| Change | Default class | Required review |
+|---|---|---|
+| Digest change under the same tag | Routine | Full validation; treat as a real image change |
+| Patch release | Routine | Normal validation and rollback evidence |
+| Minor release | Elevated when compatibility risk exists | Release notes and compatibility review |
+| Major release | Elevated | Explicit migration, data and rollback review |
+| Stateful/schema-changing image | Elevated | Current backup and service recovery plan |
+| Security emergency | Emergency | Accelerated review, but never omit desired state or rollback evidence |
+
+## Downgrades
+
+Downgrades are denied by default and governed by [Downgrade Policy](downgrade-policy.md).
+
+A tag comparison alone is insufficient where tags are not valid semantic versions. Validation should compare exact current/candidate references and require explicit operator approval when ordering cannot be established safely.
+
+## Update authorities
+
+- Renovate proposes Git changes.
+- WUD supplies an independent runtime update signal.
+- Vendor advisories may trigger manual proposals.
+- None of these sources may directly replace production containers outside the guarded deployment workflow.
 
 ## Exceptions
 
-Exceptions are stored in Git and must include:
+All exceptions must be recorded in `policy/exceptions.yml` and include:
 
-- service;
+- host/project/service scope;
 - exception type;
-- rationale;
-- risk;
+- rationale and risk;
 - owner;
-- review/expiry date.
+- compensating controls;
+- approval date;
+- review/expiry date;
+- rollback method.
+
+Expired or incomplete exceptions are non-compliant.
+
+## Initial Stage 1 decisions
+
+- New normal registry services should use explicit release tags.
+- Digest pinning is the preferred end state where reliable update metadata exists.
+- Vendor-managed multi-container stacks, especially Greenbone Community Edition, require vendor-model review before mass pinning.
+- DNS, security, stateful monitoring and data-store images are elevated changes.
+- Local builds require provenance controls before automated rebuild/deployment.
