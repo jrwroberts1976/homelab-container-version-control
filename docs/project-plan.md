@@ -13,16 +13,16 @@ Target initial production completion: **16 October 2026**
 
 ## Timeline
 
-| Stage | Target window | Outcome | Go/no-go gate |
-|---|---|---|---|
-| 0. Discovery & baseline | 21–28 Aug | Complete image + secrets inventory; identify drift/floating tags | Every in-scope service identified; no unknown critical runtime |
-| 1. Git control & policy | 29 Aug–4 Sep | Desired versions, pinning rules, exceptions and rollback policy defined | Compose sources mapped; accidental downgrade checks designed |
-| 2. Secrets foundation | 5–11 Sep | SOPS + age established; secret migration pilot; key backup/recovery tested | No plaintext repo secrets; recovery test passes |
-| 3. Update proposals | 12–18 Sep | Renovate configured to create controlled Docker image PRs | PRs are accurate; no automatic production deployment |
-| 4. Validation gate | 19–25 Sep | Jenkins validates Compose, downgrade risk, architecture, policy and Trivy results | Candidate changes reliably pass/fail before deployment |
-| 5. Pilot go-live | 26 Sep–2 Oct | Guarded deployment of selected low-risk services | Health and rollback tests pass for pilot services |
-| 6. Production rollout | 3–9 Oct | Extend process to critical/BAU services in controlled batches | Critical service rollback and recovery demonstrated |
-| 7. Observability & closure | 10–16 Oct | Grafana/Prometheus compliance view, alerting, runbooks and handover | Runtime drift visible; operational runbook accepted |
+| Stage | Target window | Current status | Outcome | Go/no-go gate |
+|---|---|---|---|---|
+| 0. Discovery & baseline | 21–28 Aug | **Complete — 23 Aug** | Complete image + secrets inventory; identify drift/floating tags | Passed: every in-scope service identified; no unknown critical runtime |
+| 1. Git control & policy | 29 Aug–4 Sep | **Complete — 23 Aug, ahead of plan** | Desired versions, pinning rules, exceptions, local-build provenance and rollback policy defined | Passed: authoritative sources mapped; registry and local-build compliance verified |
+| 2. Secrets foundation | 5–11 Sep | **Next** | SOPS + age established; secret migration pilot; key backup/recovery tested | No plaintext repo secrets; recovery test passes |
+| 3. Update proposals | 12–18 Sep | Planned | Renovate configured to create controlled Docker image PRs | PRs are accurate; no automatic production deployment |
+| 4. Validation gate | 19–25 Sep | Planned | Jenkins validates Compose, downgrade risk, architecture, policy and Trivy results | Candidate changes reliably pass/fail before deployment |
+| 5. Pilot go-live | 26 Sep–2 Oct | Pattern proven; formal gate pending | Guarded deployment of selected low-risk services | Health and rollback tests pass for pilot services |
+| 6. Production rollout | 3–9 Oct | Planned | Extend process to critical/BAU services in controlled batches | Critical service rollback and recovery demonstrated |
+| 7. Observability & closure | 10–16 Oct | Planned | Grafana/Prometheus compliance view, alerting, runbooks and handover | Runtime drift visible; operational runbook accepted |
 
 ## Stage 0 — Discovery and baseline
 
@@ -74,6 +74,24 @@ Final evidence:
 - Git representation exists for all pilot services.
 - Policy can distinguish compliant, floating, drifted and unmanaged services.
 - Downgrade protection can be tested against a known mismatch scenario.
+
+### Completion status
+
+Stage 1 passed on **23 August 2026**, ahead of its original planning window.
+
+Final evidence:
+
+- TestServer registry estate reconciled to 2 digest-pinned and 23 version-tagged services;
+- ids-01 reconciled to 11 version-tagged services and 20 Greenbone containers covered by approved exception `EX-2026-001`;
+- zero registry-image drift, unmanaged containers or unapproved floating references;
+- BirdNET exporter, CrowdSec exporter, Engineering Portfolio and Projects site rebuilt with OCI source/revision labels;
+- all four managed local builds report `revision-match`;
+- Jenkins retained as the sole documented `no-git-source` exception;
+- authoritative configuration and application source consolidated into default `main` branches;
+- guarded adoptions completed with health, HTTP, monitoring and rollback verification;
+- explicit previous-known-good images retained after successful adoption.
+
+Stage 2 is now the next active gate. Automated production deployment remains disabled until secrets recovery, validation and later rollout gates pass.
 
 ## Stage 2 — Secrets foundation
 
