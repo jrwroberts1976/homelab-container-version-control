@@ -45,7 +45,7 @@ version: 1
 
 exceptions:
   - id: EX-2026-001
-    status: proposed
+    status: approved
     scope:
       host: ids-01
       compose_project: greenbone-community-edition
@@ -71,8 +71,8 @@ exceptions:
       - Retain pre-change image digests until the acceptance window passes.
       - Do not allow WUD or another runtime tool to deploy the update directly.
     owner: homelab-operations
-    approved_by: pending
-    approved_on: null
+    approved_by: jrwroberts1976
+    approved_on: 2026-08-23
     review_on: 2026-09-30
     rollback_method: >-
       Restore the recorded pre-change compose revision and exact image
