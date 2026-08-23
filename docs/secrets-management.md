@@ -127,6 +127,25 @@ Stage 0 must identify, per service:
 
 Actual secret values must never be copied into the inventory.
 
+## Stage 0 discovery result
+
+The names-only collector was validated against all 30 TestServer containers on 23 August 2026.
+
+Four services currently use environment-variable delivery:
+
+| Service | Sensitive name |
+|---|---|
+| `autokuma` | `AUTOKUMA__KUMA__PASSWORD` |
+| `librespeed` | `PASSWORD` |
+| `duckdns` | `TOKEN` |
+| `cloudflare-ddns` | `CLOUDFLARE_API_TOKEN` |
+
+The remaining 26 containers had no sensitive delivery method detected by the collector. No Compose-secret, sensitive-mount or sensitive build-argument delivery was detected.
+
+This is a delivery-method inventory, not proof that a name contains a valid or non-empty secret. Values and secret-file contents were intentionally excluded.
+
+Stage 2 must assess each of the four applications for file-based or `_FILE` support. Until migrated, each environment-delivered item requires a documented exception and must remain outside plaintext Git.
+
 ## Go-live gates
 
 Deployment automation cannot progress to production until:
