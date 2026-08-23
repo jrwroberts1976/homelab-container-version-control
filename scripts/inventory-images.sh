@@ -83,8 +83,8 @@ compose_declared_image() {
 
     jq -er --arg service "$service" \
         '.services[$service] |
-         if .image then .image
-         elif .build then "__LOCAL_BUILD__"
+         if .build then "__LOCAL_BUILD__"
+         elif .image then .image
          else empty
          end' \
         <<<"$config_json"
