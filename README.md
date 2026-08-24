@@ -147,6 +147,7 @@ Completed on **23 August 2026**:
 - safe environment templates added while live credentials, databases, TLS keys, generated metrics and backup state remain excluded;
 - shell, Python, systemd, whitespace and secret-content validation passed;
 - adoption merged into `home-lab-docs/main` through [PR #16](https://github.com/jrwroberts1976/home-lab-docs/pull/16).
+- non-destructive recovery rehearsal reconstructed 38 files and 14 executables with matching hashes, validated systemd units and preserved secret exclusion; the tested runbook was merged through [PR #17](https://github.com/jrwroberts1976/home-lab-docs/pull/17).
 
 This extends recovery and audit coverage for critical DNS operations while preserving the rule that Git stores desired state and source—not runtime databases or plaintext secrets.
 
