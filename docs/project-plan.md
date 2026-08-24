@@ -351,4 +351,17 @@ The second Stage 2 pilot completed on 24 August 2026:
 - confirmed no related plaintext declaration remained in the active stacks tree;
 - merged the authoritative Compose declaration into `docker-env/main` at `e557f924`.
 
-Three original environment-delivered secret candidates remain: AutoKuma, LibreSpeed and DuckDNS.
+Two original environment-delivered secret candidates remain: AutoKuma and LibreSpeed.
+
+### DuckDNS Compose-secret pilot
+
+The third Stage 2 pilot completed on 24 August 2026:
+
+- migrated the DuckDNS token from plaintext `.env` delivery to LinuxServer `FILE__TOKEN` delivery;
+- mounted the token read-only through Docker Compose secrets;
+- verified successful environment resolution and a live DuckDNS update request;
+- preserved the pinned image, zero restart count and shared-stack isolation;
+- removed the obsolete plaintext `.env` file;
+- merged the authoritative declaration into `docker-env/main` at `1724f2ce`.
+
+Two original environment-delivered candidates remain: AutoKuma and LibreSpeed.

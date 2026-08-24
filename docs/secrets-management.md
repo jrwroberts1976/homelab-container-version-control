@@ -242,3 +242,32 @@ Variable and path register:
 Validation established that direct environment delivery was removed, the native `_FILE` interface loaded the token, the container retained image `1.17.0` with zero restarts, and the managed DNS record was already up to date.
 
 The plaintext stack `.env` was removed. No related plaintext declaration remained under the active stacks tree. The desired-state change was merged into `jrwroberts1976/docker-env/main` at revision `e557f924`.
+
+## Verified Compose-secret pilot: DuckDNS
+
+The third production Compose-secret adoption was completed on `TestServer` on 24 August 2026.
+
+LinuxServer DuckDNS now consumes its token through:
+
+```text
+FILE__TOKEN=/run/secrets/duckdns_token
+```
+
+Variable and path register:
+
+| Item | Consumer or location | Classification |
+|---|---|---|
+| `FILE__TOKEN` | LinuxServer environment initialisation | Secret reference |
+| `TOKEN` | DuckDNS runtime; derived from mounted file | Secret |
+| `DUCKDNS_TOKEN` | Retired stack `.env` variable | Retired secret delivery |
+| `duckdns_token` | Docker Compose secret name | Secret reference |
+| `/home/james/docker/secrets/duckdns-token` | Host source, mode `0400` | Secret |
+| `/run/secrets/duckdns_token` | Read-only container mount | Secret |
+| `PUID` / `PGID` | LinuxServer runtime identity | Configuration |
+| `TZ` | Container timezone | Configuration |
+| `SUBDOMAINS` | Managed DuckDNS names | Sensitive identifier |
+| `UPDATE_IP` | Address-family policy | Configuration |
+
+Validation established that LinuxServer env-init resolved `TOKEN` from `FILE__TOKEN`, the DuckDNS request succeeded, the pinned image and zero restart count were retained, and Authelia and Nginx Proxy Manager were not recreated.
+
+The plaintext stack `.env` was removed and the desired state was merged into `docker-env/main` at revision `1724f2ce`.
