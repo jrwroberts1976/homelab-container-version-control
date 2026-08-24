@@ -132,7 +132,7 @@ Completed on **23 August 2026**:
 - 16 active container instances assessed: 3 digest-pinned and 13 explicitly version-tagged;
 - zero floating images, digest drift, unknown ownership or unready active containers.
 
-Grafana is the notification control plane. K3s compliance alert rules remain the next controlled step; they are not yet recorded as complete.
+Grafana is the notification control plane. On **24 August 2026**, four Git-managed K3s compliance rules were deployed for inventory failure, stale evidence, digest drift and unready containers. All four evaluated as `inactive` with health `ok` after the direct Prometheus queries were corrected to use instant evaluation.
 
 ## DietPi operational-state extension
 
@@ -170,6 +170,6 @@ Stage 1 completed on **23 August 2026**, ahead of its original planning window. 
 
 Local-build provenance is also reconciled. BirdNET exporter, CrowdSec exporter, Engineering Portfolio and the Projects site all report `revision-match` against clean authoritative source. Jenkins remains the sole documented `no-git-source` exception. Guarded image adoptions passed container-health, HTTP or monitoring validation, and explicit rollback images remain retained.
 
-**Docker Stage 2 — Secrets foundation is next.** In parallel, the K3s extension has completed automated inventory and central Prometheus ingestion; Grafana compliance alerts are next. Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
+**Docker Stage 2 — Secrets foundation is next.** The K3s extension has completed automated inventory, central Prometheus ingestion and Grafana compliance alerting. GitOps reconciliation and preventive admission policy remain future Kubernetes work. Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
 
 See [Stage 0 baseline findings](docs/stage0-baseline-findings.md) and the [project tracker](https://github.com/jrwroberts1976/homelab-container-version-control/issues/1).
