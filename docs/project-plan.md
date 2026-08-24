@@ -339,3 +339,16 @@ Next Stage 2 activities:
 3. document and test age identity backup and recovery;
 4. validate Jenkins credential handling and log masking;
 5. document exceptions for applications that cannot consume file secrets.
+
+### Cloudflare DDNS Compose-secret pilot
+
+The second Stage 2 pilot completed on 24 August 2026:
+
+- migrated `CLOUDFLARE_API_TOKEN` from plaintext `.env` delivery to native `CLOUDFLARE_API_TOKEN_FILE` delivery;
+- mounted the token read-only through Docker Compose secrets;
+- retained the pinned image, zero restart count and successful DNS check;
+- removed the obsolete plaintext `.env` file;
+- confirmed no related plaintext declaration remained in the active stacks tree;
+- merged the authoritative Compose declaration into `docker-env/main` at `e557f924`.
+
+Three original environment-delivered secret candidates remain: AutoKuma, LibreSpeed and DuckDNS.

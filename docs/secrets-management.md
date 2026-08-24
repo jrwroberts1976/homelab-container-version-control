@@ -215,3 +215,30 @@ Secret path mapping:
 - Grafana reference: `GF_SMTP_PASSWORD__FILE`
 
 Only names, consumers and delivery locations are recorded. Secret values are excluded.
+
+## Verified Compose-secret pilot: Cloudflare DDNS
+
+The second production Compose-secret adoption was completed on `TestServer` on 24 August 2026.
+
+The `favonia/cloudflare-ddns:1.17.0` container now consumes its token through:
+
+```text
+CLOUDFLARE_API_TOKEN_FILE=/run/secrets/cloudflare_api_token
+```
+
+Variable and path register:
+
+| Item | Consumer or location | Classification |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN_FILE` | Cloudflare DDNS configuration | Secret reference |
+| `CLOUDFLARE_API_TOKEN` | Derived internally from the mounted file | Secret |
+| `cloudflare_api_token` | Docker Compose secret name | Secret reference |
+| `/home/james/docker/secrets/cloudflare-api-token` | Host source, mode `0400` | Secret |
+| `/run/secrets/cloudflare_api_token` | Read-only container mount | Secret |
+| `DOMAINS` | Cloudflare DDNS | Configuration |
+| `PROXIED` | Cloudflare DDNS | Configuration |
+| `IP6_PROVIDER` | Cloudflare DDNS | Configuration |
+
+Validation established that direct environment delivery was removed, the native `_FILE` interface loaded the token, the container retained image `1.17.0` with zero restarts, and the managed DNS record was already up to date.
+
+The plaintext stack `.env` was removed. No related plaintext declaration remained under the active stacks tree. The desired-state change was merged into `jrwroberts1976/docker-env/main` at revision `e557f924`.
