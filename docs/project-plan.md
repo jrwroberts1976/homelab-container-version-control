@@ -17,7 +17,7 @@ Target initial production completion: **16 October 2026**
 |---|---|---|---|---|
 | 0. Discovery & baseline | 21–28 Aug | **Complete — 23 Aug** | Complete image + secrets inventory; identify drift/floating tags | Passed: every in-scope service identified; no unknown critical runtime |
 | 1. Git control & policy | 29 Aug–4 Sep | **Complete — 23 Aug, ahead of plan** | Desired versions, pinning rules, exceptions, local-build provenance and rollback policy defined | Passed: authoritative sources mapped; registry and local-build compliance verified |
-| 2. Secrets foundation | 5–11 Sep | **Next** | SOPS + age established; secret migration pilot; key backup/recovery tested | No plaintext repo secrets; recovery test passes |
+| 2. Secrets foundation | 5–11 Sep | **In progress — started 24 Aug** | Four Compose-secret pilots complete; SOPS + age and recovery testing remain | No plaintext repo secrets; recovery test passes |
 | 3. Update proposals | 12–18 Sep | Planned | Renovate configured to create controlled Docker image PRs | PRs are accurate; no automatic production deployment |
 | 4. Validation gate | 19–25 Sep | Planned | Jenkins validates Compose, downgrade risk, architecture, policy and Trivy results | Candidate changes reliably pass/fail before deployment |
 | 5. Pilot go-live | 26 Sep–2 Oct | Pattern proven; formal gate pending | Guarded deployment of selected low-risk services | Health and rollback tests pass for pilot services |
@@ -351,7 +351,7 @@ The second Stage 2 pilot completed on 24 August 2026:
 - confirmed no related plaintext declaration remained in the active stacks tree;
 - merged the authoritative Compose declaration into `docker-env/main` at `e557f924`.
 
-Two original environment-delivered secret candidates remain: AutoKuma and LibreSpeed.
+Subsequent review classified LibreSpeed as a false positive and retained AutoKuma as a genuine migration candidate.
 
 ### DuckDNS Compose-secret pilot
 
@@ -364,4 +364,23 @@ The third Stage 2 pilot completed on 24 August 2026:
 - removed the obsolete plaintext `.env` file;
 - merged the authoritative declaration into `docker-env/main` at `1724f2ce`.
 
-Two original environment-delivered candidates remain: AutoKuma and LibreSpeed.
+Subsequent review identified AutoKuma as the remaining genuine original candidate, classified LibreSpeed as an unused image-default false positive, and found the previously missed Uptime Kuma SMTP password because its runtime name ends in `_PASS` rather than `PASSWORD`.
+
+
+### AutoKuma Compose-secret pilot
+
+The fourth Stage 2 pilot completed on 24 August 2026:
+
+- migrated the effective AutoKuma credential from duplicated `.env` declarations to the Compose secret `autokuma_kuma_password`;
+- selected the only declaration matching the known-good runtime credential and excluded the stale duplicate without recording either value;
+- confirmed that AutoKuma v2.0.0 does not implement the secret-file syntax described by later development documentation;
+- introduced a controlled startup wrapper that reads `/run/secrets/autokuma_kuma_password`, exports `AUTOKUMA__KUMA__PASSWORD` inside the process and then executes AutoKuma;
+- removed direct password delivery from Docker's configured environment;
+- verified the read-only mount, zero restart count and successful AutoKuma authentication;
+- preserved Uptime Kuma, LibreSpeed and Smokeping without recreation;
+- normalised the shared environment file to retain only `AUTOKUMA_KUMA_USERNAME` and `KUMA_SMTP_PASSWORD`;
+- merged the authoritative Compose declaration into `docker-env/main` at revision `ef31441`.
+
+LibreSpeed requires no secret migration in its current standalone, telemetry-disabled mode: the observed eight-character `PASSWORD` equals the image default and has no Compose or stack-environment declaration.
+
+The next genuine application credential is `KUMA_SMTP_PASSWORD`, consumed by Uptime Kuma as `UPTIME_KUMA_SMTP_PASS`. The Stage 0 collector must also be extended to recognise sensitive names ending in `_PASS`.
