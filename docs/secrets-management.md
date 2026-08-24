@@ -169,3 +169,49 @@ After the initial SOPS + age operating model is stable, evaluate whether Infisic
 - operator access control.
 
 A central platform should only be added if its operational value outweighs the availability and recovery dependency it introduces.
+
+## Verified Compose-secret pilot: Grafana SMTP
+
+The first production Docker Compose secret adoption was completed on `ids-01` on 24 August 2026.
+
+Grafana now receives its Gmail application password through:
+
+```text
+GF_SMTP_PASSWORD__FILE=/run/secrets/grafana_smtp_password
+```
+
+The source file is maintained outside Git under `/home/james/docker/secrets`. The parent directory is mode `0700`. The file is mode `0444` so the non-root Grafana container can read the bind mount while other host users cannot traverse the protected directory.
+
+Validation established that:
+
+- the rotated credential authenticated directly with Gmail;
+- Grafana resolved the `_FILE` setting successfully;
+- the Grafana health endpoint remained healthy;
+- the email contact-point test delivered successfully;
+- no direct password remained in active Compose, `.env` or the container environment;
+- all 29 alert rules survived the scoped Grafana recreation;
+- 303 retired Compose copies containing the rotated password were removed.
+
+This pilot proves the Compose-secret delivery pattern. It does not complete Stage 2: remaining environment-delivered secrets, SOPS and age recovery, Jenkins handling and recovery testing still require implementation.
+
+### Grafana variable register
+
+| Variable | Consumer | Delivery | Classification |
+|---|---|---|---|
+| `GF_SMTP_ENABLED` | Grafana | Compose environment | Configuration |
+| `GF_SMTP_HOST` | Grafana | Compose environment | Configuration |
+| `GF_SMTP_USER` | Grafana | Compose environment | Sensitive identifier |
+| `GF_SMTP_FROM_ADDRESS` | Grafana | Compose environment | Sensitive identifier |
+| `GF_SMTP_SKIP_VERIFY` | Grafana | Compose environment | Security configuration |
+| `GF_SMTP_PASSWORD__FILE` | Grafana entrypoint | Runtime secret path | Secret reference |
+| `GF_SMTP_PASSWORD` | Grafana runtime | Derived from mounted file | Secret |
+| `GRAFANA_TOKEN` | Alert deployment tooling | Protected stack `.env` | Secret |
+
+Secret path mapping:
+
+- Host source: `/home/james/docker/secrets/grafana-smtp-password`
+- Compose name: `grafana_smtp_password`
+- Container mount: `/run/secrets/grafana_smtp_password`
+- Grafana reference: `GF_SMTP_PASSWORD__FILE`
+
+Only names, consumers and delivery locations are recorded. Secret values are excluded.

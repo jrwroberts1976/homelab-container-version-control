@@ -317,3 +317,25 @@ The initial project is complete when every in-scope service on TestServer and id
 - validation before deployment;
 - a reproducible rollback path;
 - secrets handled under the agreed policy or a documented exception.
+
+## Progress update — 24 August 2026
+
+Docker Stage 2 began with the successful Grafana SMTP Compose-secret pilot on `ids-01`.
+
+Completed:
+
+- rotated the previously exposed Gmail application password;
+- migrated Grafana from a direct password declaration to `GF_SMTP_PASSWORD__FILE`;
+- resolved non-root container access to the mounted secret;
+- verified direct SMTP authentication and Grafana contact-point delivery;
+- preserved Grafana health and all 29 alert rules during a Grafana-only recreation;
+- removed direct password delivery from active Compose, `.env` and the runtime environment;
+- permanently removed 303 retired Compose copies containing the rotated credential.
+
+Next Stage 2 activities:
+
+1. assess and migrate the remaining environment-delivered secrets;
+2. implement the SOPS and age encrypted-source pattern;
+3. document and test age identity backup and recovery;
+4. validate Jenkins credential handling and log masking;
+5. document exceptions for applications that cannot consume file secrets.
