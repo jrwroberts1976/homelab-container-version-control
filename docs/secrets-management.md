@@ -293,8 +293,8 @@ AutoKuma v2.0.0 does not implement the `@/run/secrets/...` file syntax described
 | `autokuma_kuma_password` | Docker Compose | Service attachment and top-level secret name | Secret reference |
 | `/home/james/docker/secrets/autokuma-kuma-password` | TestServer host | Outside Git; protected parent directory; file readable by the container | Secret |
 | `/run/secrets/autokuma_kuma_password` | AutoKuma container | Read-only Compose-secret mount | Secret |
-| `KUMA_SMTP_PASSWORD` | Shared availability `.env` | Still present; next migration candidate | Secret |
-| `UPTIME_KUMA_SMTP_PASS` | Uptime Kuma runtime | Currently derived from `KUMA_SMTP_PASSWORD` | Secret |
+| `KUMA_SMTP_PASSWORD` | Retired shared availability `.env` variable | Removed after proving the SMTP block unused | Retired unused secret source |
+| `UPTIME_KUMA_SMTP_PASS` | Retired Uptime Kuma container variable | Removed; no implementation reference in version 1.23.16 | Retired unused configuration |
 
 Validation established that:
 
@@ -312,3 +312,33 @@ Only variable names, consumers, paths and delivery methods are recorded. Credent
 ## LibreSpeed classification
 
 LibreSpeed `ghcr.io/librespeed/speedtest:6.2.1` exposes a runtime `PASSWORD` value from the image, but the active stack declares neither `PASSWORD` nor a corresponding `.env` entry. The observed length matched the image default exactly, while `MODE=standalone` and `TELEMETRY=false`. It is therefore a Stage 0 discovery false positive and requires no secret migration in the current configuration.
+
+
+## Retired configuration: Uptime Kuma SMTP environment block
+
+A read-only source, entrypoint, runtime and database review on 24 August 2026 established that Uptime Kuma 1.23.16 does not consume the six SMTP environment variables present in the availability Compose file. The notification table also contained zero rows.
+
+### Retired Uptime Kuma variable register
+
+| Variable | Former consumer/location | Final status | Classification |
+|---|---|---|---|
+| `KUMA_SMTP_PASSWORD` | Shared availability `.env` | Removed | Retired unused secret source |
+| `UPTIME_KUMA_SMTP_HOST` | Uptime Kuma Docker environment | Removed; no implementation reference | Retired unused configuration |
+| `UPTIME_KUMA_SMTP_PORT` | Uptime Kuma Docker environment | Removed; no implementation reference | Retired unused configuration |
+| `UPTIME_KUMA_SMTP_SECURE` | Uptime Kuma Docker environment | Removed; no implementation reference | Retired unused configuration |
+| `UPTIME_KUMA_SMTP_USER` | Uptime Kuma Docker environment | Removed; no implementation reference | Retired sensitive identifier |
+| `UPTIME_KUMA_SMTP_PASS` | Uptime Kuma Docker environment | Removed; no implementation reference | Retired unused secret delivery |
+| `UPTIME_KUMA_SMTP_FROM` | Uptime Kuma Docker environment | Removed; no implementation reference | Retired sensitive identifier |
+
+Validation established that:
+
+- zero files under `/app` referenced `UPTIME_KUMA_SMTP`;
+- the entrypoint provided no `_FILE`, `FILE__` or other relevant secret-file handling;
+- the notification table contained zero rows;
+- the scoped Uptime Kuma recreation returned healthy with zero restarts;
+- the recreated container had zero `UPTIME_KUMA_SMTP_*` variables;
+- AutoKuma, LibreSpeed and Smokeping retained their original container identities;
+- the shared `.env` now contains only `AUTOKUMA_KUMA_USERNAME`;
+- the retirement was merged into `docker-env/main` at revision `a4711b4`.
+
+This finding reinforces a two-step inventory rule: first detect potentially sensitive names, including suffixes such as `_PASS`; then verify that the application actually consumes the declaration before designing a migration.
