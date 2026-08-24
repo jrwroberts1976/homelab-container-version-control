@@ -131,7 +131,7 @@ Actual secret values must never be copied into the inventory.
 
 The names-only collector was validated against all 30 TestServer containers on 23 August 2026.
 
-Four services currently use environment-variable delivery:
+The initial collector reported four services using environment-variable delivery:
 
 | Service | Sensitive name |
 |---|---|
@@ -144,7 +144,9 @@ The remaining 26 containers had no sensitive delivery method detected by the col
 
 This is a delivery-method inventory, not proof that a name contains a valid or non-empty secret. Values and secret-file contents were intentionally excluded.
 
-Stage 2 must assess each of the four applications for file-based or `_FILE` support. Until migrated, each environment-delivered item requires a documented exception and must remain outside plaintext Git.
+Stage 2 review found that LibreSpeed's `PASSWORD` is an unused image default in standalone, telemetry-disabled mode rather than a managed credential. It also found a genuine item missed by the original name matcher: Uptime Kuma consumes `KUMA_SMTP_PASSWORD` as `UPTIME_KUMA_SMTP_PASS`. Future discovery must recognise `_PASS` as well as `PASSWORD`, `TOKEN`, `SECRET` and `KEY`.
+
+Each genuine environment-delivered item requires file-based delivery or a documented exception and must remain outside plaintext Git.
 
 ## Go-live gates
 
@@ -271,3 +273,42 @@ Variable and path register:
 Validation established that LinuxServer env-init resolved `TOKEN` from `FILE__TOKEN`, the DuckDNS request succeeded, the pinned image and zero restart count were retained, and Authelia and Nginx Proxy Manager were not recreated.
 
 The plaintext stack `.env` was removed and the desired state was merged into `docker-env/main` at revision `1724f2ce`.
+
+
+## Verified Compose-secret pilot: AutoKuma
+
+The fourth production Compose-secret adoption completed on `TestServer` on 24 August 2026.
+
+AutoKuma v2.0.0 does not implement the `@/run/secrets/...` file syntax described in later development documentation. A controlled Compose startup wrapper therefore reads the mounted secret, exports the runtime variable inside the container process and then replaces the shell with AutoKuma.
+
+### AutoKuma variable and path register
+
+| Item | Consumer or location | Delivery/status | Classification |
+|---|---|---|---|
+| `AUTOKUMA_KUMA_PASSWORD` | Retired shared stack `.env` variable | Removed after migration | Retired secret delivery |
+| `AUTOKUMA__KUMA__PASSWORD` | AutoKuma v2.0.0 process | Exported by startup wrapper from mounted file; absent from Docker Config environment | Secret |
+| `AUTOKUMA_KUMA_USERNAME` | Compose interpolation | Retained once after duplicate normalisation | Sensitive identifier |
+| `AUTOKUMA__KUMA__USERNAME` | AutoKuma runtime | Derived from `AUTOKUMA_KUMA_USERNAME` | Sensitive identifier |
+| `AUTOKUMA__KUMA__URL` | AutoKuma runtime | Compose environment | Configuration |
+| `autokuma_kuma_password` | Docker Compose | Service attachment and top-level secret name | Secret reference |
+| `/home/james/docker/secrets/autokuma-kuma-password` | TestServer host | Outside Git; protected parent directory; file readable by the container | Secret |
+| `/run/secrets/autokuma_kuma_password` | AutoKuma container | Read-only Compose-secret mount | Secret |
+| `KUMA_SMTP_PASSWORD` | Shared availability `.env` | Still present; next migration candidate | Secret |
+| `UPTIME_KUMA_SMTP_PASS` | Uptime Kuma runtime | Currently derived from `KUMA_SMTP_PASSWORD` | Secret |
+
+Validation established that:
+
+- the only source declaration matching the known-good runtime credential was used and the stale duplicate was excluded;
+- the first unsupported native-file attempt failed authentication and rolled back automatically;
+- the compatibility wrapper subsequently authenticated successfully;
+- Docker Config contains no direct `AUTOKUMA__KUMA__PASSWORD` entry;
+- the secret mount is read-only and the wrapper command references the mounted file;
+- AutoKuma remained running with zero restarts and no recent authentication errors;
+- Uptime Kuma, LibreSpeed and Smokeping were not recreated;
+- the desired state was merged into `docker-env/main` at revision `ef31441`.
+
+Only variable names, consumers, paths and delivery methods are recorded. Credential values are excluded.
+
+## LibreSpeed classification
+
+LibreSpeed `ghcr.io/librespeed/speedtest:6.2.1` exposes a runtime `PASSWORD` value from the image, but the active stack declares neither `PASSWORD` nor a corresponding `.env` entry. The observed length matched the image default exactly, while `MODE=standalone` and `TELEMETRY=false`. It is therefore a Stage 0 discovery false positive and requires no secret migration in the current configuration.
