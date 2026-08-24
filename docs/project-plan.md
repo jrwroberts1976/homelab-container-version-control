@@ -35,7 +35,7 @@ The Kubernetes workstream applies the same controls without changing the Docker 
 | K1. Image policy and provenance | 23 Aug 2026 | Active declarations classified; pinned images correlated with runtime digests | 3 digest-pinned and 13 version-tagged active instances |
 | K2. Automated compliance metrics | 23 Aug 2026 | Five-minute inventory export through node-exporter | `k3s-image-compliance.timer`, scrape error `0` |
 | K3. Central monitoring | 23 Aug 2026 | Compliance series ingested by Prometheus on ids-01 | target up, success `1`, drift `0`, fresh timestamp |
-| K4. Alerting | Next | Grafana-managed stale, failure, drift and readiness alerts | Pending controlled rule deployment |
+| K4. Alerting | 24 Aug 2026 | Grafana-managed stale, failure, drift and readiness alerts | Four Git-managed rules deployed; all evaluated `inactive` with health `ok` |
 | K5. GitOps and admission policy | Planned | Continuous reconciliation and preventive policy | Future stage |
 
 See [K3s Stage 1 compliance monitoring](k3s-stage1-compliance.md).
