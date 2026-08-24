@@ -169,3 +169,76 @@ After the initial SOPS + age operating model is stable, evaluate whether Infisic
 - operator access control.
 
 A central platform should only be added if its operational value outweighs the availability and recovery dependency it introduces.
+
+## Verified Compose-secret pilot: Grafana SMTP
+
+The first production Docker Compose secret adoption was completed on `ids-01` on 24 August 2026.
+
+Grafana now receives its Gmail application password through:
+
+```text
+GF_SMTP_PASSWORD__FILE=/run/secrets/grafana_smtp_password
+```
+
+The source file is maintained outside Git under `/home/james/docker/secrets`. The parent directory is mode `0700`. The file is mode `0444` so the non-root Grafana container can read the bind mount while other host users cannot traverse the protected directory.
+
+Validation established that:
+
+- the rotated credential authenticated directly with Gmail;
+- Grafana resolved the `_FILE` setting successfully;
+- the Grafana health endpoint remained healthy;
+- the email contact-point test delivered successfully;
+- no direct password remained in active Compose, `.env` or the container environment;
+- all 29 alert rules survived the scoped Grafana recreation;
+- 303 retired Compose copies containing the rotated password were removed.
+
+This pilot proves the Compose-secret delivery pattern. It does not complete Stage 2: remaining environment-delivered secrets, SOPS and age recovery, Jenkins handling and recovery testing still require implementation.
+
+### Grafana variable register
+
+| Variable | Consumer | Delivery | Classification |
+|---|---|---|---|
+| `GF_SMTP_ENABLED` | Grafana | Compose environment | Configuration |
+| `GF_SMTP_HOST` | Grafana | Compose environment | Configuration |
+| `GF_SMTP_USER` | Grafana | Compose environment | Sensitive identifier |
+| `GF_SMTP_FROM_ADDRESS` | Grafana | Compose environment | Sensitive identifier |
+| `GF_SMTP_SKIP_VERIFY` | Grafana | Compose environment | Security configuration |
+| `GF_SMTP_PASSWORD__FILE` | Grafana entrypoint | Runtime secret path | Secret reference |
+| `GF_SMTP_PASSWORD` | Grafana runtime | Derived from mounted file | Secret |
+| `GRAFANA_TOKEN` | Alert deployment tooling | Protected stack `.env` | Secret |
+
+Secret path mapping:
+
+- Host source: `/home/james/docker/secrets/grafana-smtp-password`
+- Compose name: `grafana_smtp_password`
+- Container mount: `/run/secrets/grafana_smtp_password`
+- Grafana reference: `GF_SMTP_PASSWORD__FILE`
+
+Only names, consumers and delivery locations are recorded. Secret values are excluded.
+
+## Verified Compose-secret pilot: Cloudflare DDNS
+
+The second production Compose-secret adoption was completed on `TestServer` on 24 August 2026.
+
+The `favonia/cloudflare-ddns:1.17.0` container now consumes its token through:
+
+```text
+CLOUDFLARE_API_TOKEN_FILE=/run/secrets/cloudflare_api_token
+```
+
+Variable and path register:
+
+| Item | Consumer or location | Classification |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN_FILE` | Cloudflare DDNS configuration | Secret reference |
+| `CLOUDFLARE_API_TOKEN` | Derived internally from the mounted file | Secret |
+| `cloudflare_api_token` | Docker Compose secret name | Secret reference |
+| `/home/james/docker/secrets/cloudflare-api-token` | Host source, mode `0400` | Secret |
+| `/run/secrets/cloudflare_api_token` | Read-only container mount | Secret |
+| `DOMAINS` | Cloudflare DDNS | Configuration |
+| `PROXIED` | Cloudflare DDNS | Configuration |
+| `IP6_PROVIDER` | Cloudflare DDNS | Configuration |
+
+Validation established that direct environment delivery was removed, the native `_FILE` interface loaded the token, the container retained image `1.17.0` with zero restarts, and the managed DNS record was already up to date.
+
+The plaintext stack `.env` was removed. No related plaintext declaration remained under the active stacks tree. The desired-state change was merged into `jrwroberts1976/docker-env/main` at revision `e557f924`.
