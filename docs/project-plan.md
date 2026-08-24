@@ -383,4 +383,19 @@ The fourth Stage 2 pilot completed on 24 August 2026:
 
 LibreSpeed requires no secret migration in its current standalone, telemetry-disabled mode: the observed eight-character `PASSWORD` equals the image default and has no Compose or stack-environment declaration.
 
-The next genuine application credential is `KUMA_SMTP_PASSWORD`, consumed by Uptime Kuma as `UPTIME_KUMA_SMTP_PASS`. The Stage 0 collector must also be extended to recognise sensitive names ending in `_PASS`.
+Follow-up inspection proved that Uptime Kuma 1.23.16 contains no implementation references for the supplied `UPTIME_KUMA_SMTP_*` variables and has no notification records. The unused block and `KUMA_SMTP_PASSWORD` source were therefore retired. The Stage 0 collector must still be extended to recognise sensitive names ending in `_PASS`, because discovery and later usage classification are separate controls.
+
+
+### Uptime Kuma unused SMTP retirement
+
+The availability-stack SMTP review completed on 24 August 2026:
+
+- confirmed that all six `UPTIME_KUMA_SMTP_*` variables reached the container but had zero implementation references in Uptime Kuma 1.23.16;
+- confirmed the notification table contained zero rows;
+- classified `KUMA_SMTP_PASSWORD` and the six derived runtime variables as unused configuration rather than an active secret-delivery path;
+- removed the unused Compose environment block and the plaintext `KUMA_SMTP_PASSWORD` entry;
+- recreated only Uptime Kuma and verified healthy status, zero restarts and zero remaining SMTP environment variables;
+- preserved AutoKuma, LibreSpeed and Smokeping without recreation;
+- merged the authoritative retirement into `docker-env/main` at revision `a4711b4`.
+
+The shared availability `.env` now contains only `AUTOKUMA_KUMA_USERNAME`, which is a sensitive identifier rather than a secret. No genuine environment-delivered secret remains in that stack based on the completed source and runtime review.
