@@ -134,6 +134,20 @@ Completed on **23 August 2026**:
 
 Grafana is the notification control plane. On **24 August 2026**, four Git-managed K3s compliance rules were deployed for inventory failure, stale evidence, digest drift and unready containers. All four evaluated as `inactive` with health `ok` after the direct Prometheus queries were corrected to use instant evaluation.
 
+## K3s datastore secret encryption
+
+Completed on **25 August 2026**:
+
+- persistent `--secrets-encryption` desired state merged into `kubernetes-homelab/main`;
+- AES-CBC encryption enabled for the K3s SQLite datastore;
+- a root-only pre-rotation recovery point validated with SQLite `quick_check` and checksums;
+- the staged `prepare`, restart, `rotate`, restart, `reencrypt`, restart workflow completed;
+- all 14 existing Kubernetes Secrets re-encrypted successfully;
+- final state verified as `Enabled`, `reencrypt_finished`, with matching server hashes;
+- Secret API access, workload health and datastore integrity passed after the final restart.
+
+Recovery-sensitive datastore, token and encryption-configuration material remains outside Git.
+
 ## DietPi operational-state extension
 
 The same source-control principles now cover the adjacent DNS and backup services on **DietPi** without treating the host as part of the Docker container count.
@@ -170,6 +184,6 @@ Stage 1 completed on **23 August 2026**, ahead of its original planning window. 
 
 Local-build provenance is also reconciled. BirdNET exporter, CrowdSec exporter, Engineering Portfolio and the Projects site all report `revision-match` against clean authoritative source. Jenkins remains the sole documented `no-git-source` exception. Guarded image adoptions passed container-health, HTTP or monitoring validation, and explicit rollback images remain retained.
 
-**Docker Stage 2 — Secrets foundation is in progress.** Four production Compose-secret pilots are complete. Grafana SMTP on `ids-01`, plus Cloudflare DDNS, DuckDNS and AutoKuma on TestServer, now use file-backed Compose secrets. Direct authentication, notification, DNS and application-login validation passed; plaintext password or token delivery was retired for each pilot. Cloudflare DDNS, DuckDNS and AutoKuma desired state is merged into `docker-env/main`. AutoKuma v2.0.0 requires a controlled startup wrapper because that release does not natively implement the documented secret-file syntax. LibreSpeed was classified as a false positive because its runtime `PASSWORD` is the unused image default in standalone, telemetry-disabled mode. The Uptime Kuma SMTP block was subsequently proven unused by version 1.23.16 and retired from Compose and the shared `.env`; the availability stack now retains only the non-secret `AUTOKUMA_KUMA_USERNAME` interpolation input. The K3s extension has completed automated inventory, central Prometheus ingestion and Grafana compliance alerting. GitOps reconciliation and preventive admission policy remain future Kubernetes work. Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
+**Docker Stage 2 — Secrets foundation is in progress.** Four production Compose-secret pilots are complete. Grafana SMTP on `ids-01`, plus Cloudflare DDNS, DuckDNS and AutoKuma on TestServer, now use file-backed Compose secrets. Direct authentication, notification, DNS and application-login validation passed; plaintext password or token delivery was retired for each pilot. Cloudflare DDNS, DuckDNS and AutoKuma desired state is merged into `docker-env/main`. AutoKuma v2.0.0 requires a controlled startup wrapper because that release does not natively implement the documented secret-file syntax. LibreSpeed was classified as a false positive because its runtime `PASSWORD` is the unused image default in standalone, telemetry-disabled mode. The Uptime Kuma SMTP block was subsequently proven unused by version 1.23.16 and retired from Compose and the shared `.env`; the availability stack now retains only the non-secret `AUTOKUMA_KUMA_USERNAME` interpolation input. The K3s extension has completed automated inventory, central Prometheus ingestion, Grafana compliance alerting and datastore encryption at rest. GitOps reconciliation, SOPS + age and preventive admission policy remain future Kubernetes work. Automated production deployment remains disabled until secrets recovery, validation and later rollout gates are satisfied.
 
 See [Stage 0 baseline findings](docs/stage0-baseline-findings.md) and the [project tracker](https://github.com/jrwroberts1976/homelab-container-version-control/issues/1).
