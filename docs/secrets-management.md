@@ -342,3 +342,21 @@ Validation established that:
 - the retirement was merged into `docker-env/main` at revision `a4711b4`.
 
 This finding reinforces a two-step inventory rule: first detect potentially sensitive names, including suffixes such as `_PASS`; then verify that the application actually consumes the declaration before designing a migration.
+
+
+## K3s encryption-at-rest register
+
+K3s datastore encryption at rest was completed on `k3s-node-01` on 25 August 2026. This control protects Kubernetes Secret objects in the embedded SQLite datastore; it is complementary to, and does not replace, SOPS + age for encrypted declarations stored in Git.
+
+| Item | Consumer or location | Delivery/status | Classification |
+|---|---|---|---|
+| `--secrets-encryption` | K3s server arguments | Persistent installation and systemd desired state | Security configuration |
+| `/var/lib/rancher/k3s/server/cred/encryption-config.json` | K3s API server | Root-only, generated locally, excluded from Git | Encryption key material |
+| `/var/lib/rancher/k3s/server/token` | K3s bootstrap and recovery | Root-only, excluded from Git | Recovery secret |
+| `/var/lib/rancher/k3s/server/db/state.db` | Embedded K3s datastore | Kubernetes Secrets encrypted using AES-CBC | Sensitive datastore |
+| `k3s secrets-encrypt status` | Operator validation | Reports state, stage and hash agreement without exposing values | Operational control |
+| `reencrypt_finished` | Encryption controller | Verified completed steady state | Compliance evidence |
+
+Validation established that all 14 existing Secret objects were re-encrypted, all server hashes matched, the Secret API remained readable, workloads remained healthy and SQLite `quick_check` returned `ok`. A root-only pre-rotation recovery point was preserved outside Git.
+
+Do not commit the server token, encryption configuration, datastore copies, age private identities or decrypted Secret values. Future Git-managed Kubernetes application secrets must use SOPS + age and a separately tested identity-recovery process.
