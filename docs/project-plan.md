@@ -17,7 +17,7 @@ Target initial production completion: **16 October 2026**
 |---|---|---|---|---|
 | 0. Discovery & baseline | 21–28 Aug | **Complete — 23 Aug** | Complete image + secrets inventory; identify drift/floating tags | Passed: every in-scope service identified; no unknown critical runtime |
 | 1. Git control & policy | 29 Aug–4 Sep | **Complete — 23 Aug, ahead of plan** | Desired versions, pinning rules, exceptions, local-build provenance and rollback policy defined | Passed: authoritative sources mapped; registry and local-build compliance verified |
-| 2. Secrets foundation | 5–11 Sep | **In progress — started 24 Aug** | Four Compose-secret pilots complete; SOPS + age and recovery testing remain | No plaintext repo secrets; recovery test passes |
+| 2. Secrets foundation | 5–11 Sep | **In progress — started 24 Aug** | Four Compose-secret pilots and K3s datastore encryption complete; SOPS + age identity recovery remains | No plaintext repo secrets; recovery test passes |
 | 3. Update proposals | 12–18 Sep | Planned | Renovate configured to create controlled Docker image PRs | PRs are accurate; no automatic production deployment |
 | 4. Validation gate | 19–25 Sep | Planned | Jenkins validates Compose, downgrade risk, architecture, policy and Trivy results | Candidate changes reliably pass/fail before deployment |
 | 5. Pilot go-live | 26 Sep–2 Oct | Pattern proven; formal gate pending | Guarded deployment of selected low-risk services | Health and rollback tests pass for pilot services |
@@ -37,6 +37,7 @@ The Kubernetes workstream applies the same controls without changing the Docker 
 | K3. Central monitoring | 23 Aug 2026 | Compliance series ingested by Prometheus on ids-01 | target up, success `1`, drift `0`, fresh timestamp |
 | K4. Alerting | 24 Aug 2026 | Grafana-managed stale, failure, drift and readiness alerts | Four Git-managed rules deployed; all evaluated `inactive` with health `ok` |
 | K5. GitOps and admission policy | Planned | Continuous reconciliation and preventive policy | Future stage |
+| K6. Datastore secret encryption | 25 Aug 2026 | Persistent AES-CBC encryption enabled; 14 existing Secrets re-encrypted | `kubernetes-homelab/main`; `reencrypt_finished`; matching hashes; recovery evidence validated |
 
 See [K3s Stage 1 compliance monitoring](k3s-stage1-compliance.md).
 
@@ -399,3 +400,18 @@ The availability-stack SMTP review completed on 24 August 2026:
 - merged the authoritative retirement into `docker-env/main` at revision `a4711b4`.
 
 The shared availability `.env` now contains only `AUTOKUMA_KUMA_USERNAME`, which is a sensitive identifier rather than a secret. No genuine environment-delivered secret remains in that stack based on the completed source and runtime review.
+
+
+### K3s datastore secret-encryption milestone
+
+Completed on 25 August 2026:
+
+- enabled persistent `--secrets-encryption` desired state on the single-server K3s cluster;
+- captured a root-only recovery point containing a consistent SQLite backup and required recovery material;
+- validated database integrity and recovery-file checksums before rotation;
+- completed the staged key transition and re-encrypted all 14 existing Kubernetes Secrets;
+- verified `Encryption Status: Enabled`, stage `reencrypt_finished` and matching server hashes;
+- verified Secret API readability, healthy workloads and SQLite integrity after the final restart;
+- merged the installation flag and operational documentation into `kubernetes-homelab/main` at revision `dd8cb32`.
+
+This completes K3s datastore encryption at rest. SOPS + age for encrypted Git-managed application declarations, offline age-identity recovery and preventive admission policy remain future Stage 2 work.
