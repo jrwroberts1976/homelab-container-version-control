@@ -1,0 +1,26 @@
+version: 1
+
+defaults:
+  parser: semver
+  unknown_result: ordering-unknown-blocked
+
+rules:
+  - repository: ghcr.io/tphakala/birdnet-go
+    parser: yyyymmdd
+    rationale: BirdNET-Go uses an eight-digit YYYYMMDD release tag.
+
+  - repository: getwud/wud
+    parser: integer
+    rationale: WUD currently uses integer release tags such as 8.
+
+  - repository: lscr.io/linuxserver/duckdns
+    parser: opaque
+    rationale: Tags such as af6dcae5-ls86 cannot be safely ordered numerically.
+
+  - repository: nginx
+    parser: channel
+    rationale: alpine identifies a moving image channel, not an ordered release.
+
+local_build:
+  parser: provenance
+  result: local-build-provenance-required
