@@ -171,30 +171,92 @@ def compose_candidate(authority_root, ownership):
     if not service_name:
         fail("ownership record has no compose_service")
 
-    image_output = run(
+    # Extract only the requested service image from the Compose model.
+    #
+    # `docker compose config --images SERVICE` includes dependency images,
+    # so it cannot safely identify one service's image (for example,
+    # autokuma also returns uptime-kuma).
+    #
+    # Use --no-interpolate so environment-derived secret values are not
+    # expanded into the Compose JSON. Pipe that JSON directly into jq and
+    # capture only the requested image field.
+    compose_process = subprocess.Popen(
         [
             *base_command,
             "config",
-            "--images",
-            service_name,
+            "--no-interpolate",
+            "--format",
+            "json",
         ],
         cwd=absolute_files[0].parent,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
 
-    images = [
-        line.strip()
-        for line in image_output.splitlines()
-        if line.strip()
-    ]
+    jq_process = subprocess.Popen(
+        [
+            "jq",
+            "-r",
+            "--arg",
+            "service",
+            service_name,
+            ".services[$service].image // empty",
+        ],
+        text=True,
+        stdin=compose_process.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
-    if len(images) != 1:
+    if compose_process.stdout is not None:
+        compose_process.stdout.close()
+
+    image_output, jq_error = jq_process.communicate()
+    compose_error = (
+        compose_process.stderr.read()
+        if compose_process.stderr is not None
+        else ""
+    )
+    compose_returncode = compose_process.wait()
+
+    if compose_returncode != 0:
         fail(
-            "expected exactly one resolved image for Compose service "
-            f"{service_name}; got {len(images)}"
+            "docker compose image extraction failed"
+            + (
+                f": {compose_error.strip()}"
+                if compose_error.strip()
+                else ""
+            )
+        )
+
+    if jq_process.returncode != 0:
+        fail(
+            "jq service-image extraction failed"
+            + (
+                f": {jq_error.strip()}"
+                if jq_error.strip()
+                else ""
+            )
+        )
+
+    image = image_output.strip()
+
+    if not image:
+        fail(
+            "Compose service has no image declaration: "
+            f"{service_name}"
+        )
+
+    if "$" in image:
+        fail(
+            "Compose service image requires interpolation; "
+            "safe image-only interpolation is not yet implemented: "
+            f"{service_name}"
         )
 
     return {
-        "image": images[0],
+        "image": image,
         "compose_files": [
             str(path.relative_to(root))
             for path in absolute_files
