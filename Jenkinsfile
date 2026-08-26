@@ -89,6 +89,7 @@ pipeline {
 
     stage('Generate deployment plan') {
       steps {
+        withEnv(["STAGE4_CONTAINER=${params.CONTAINER}"]) {
         withCredentials([
           sshUserPrivateKey(
             credentialsId: 'homelab-stage4-testserver-validator',
@@ -111,13 +112,14 @@ pipeline {
               -o StrictHostKeyChecking=yes \
               -o UserKnownHostsFile="$STAGE4_KNOWN_HOSTS" \
               "$STAGE4_SSH_USER@$STAGE4_HOST" \
-              "plan $CONTAINER" \
+              "plan $STAGE4_CONTAINER" \
               > artifacts/deployment-plan.json
 
             test -s artifacts/deployment-plan.json
 
             echo "PASS: Stage 4 deployment-plan artifact received"
           '''
+        }
         }
       }
     }
