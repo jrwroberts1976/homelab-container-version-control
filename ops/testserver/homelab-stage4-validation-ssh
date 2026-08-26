@@ -1,0 +1,63 @@
+#!/bin/bash
+set -u
+
+TOOLING="/opt/homelab-container-version-control-stage4/c8ff8f8ff625469ceae1a18177f088c62b18feaa"
+AUTHORITY="/var/tmp/docker-env-stage4"
+CACHE="/var/tmp/homelab-container-version-control-trivy-cache"
+
+die() {
+  echo "ERROR: $1" >&2
+  exit 2
+}
+
+ORIGINAL="${SSH_ORIGINAL_COMMAND:-}"
+
+case "$ORIGINAL" in
+  "ping")
+    printf '%s\n' \
+      '{"mode":"read-only","runner":"stage4-validation","result":"ready"}'
+    exit 0
+    ;;
+
+  "plan "*)
+    CONTAINER="${ORIGINAL#plan }"
+    ;;
+
+  *)
+    die "command not permitted"
+    ;;
+esac
+
+[[ "$CONTAINER" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] ||
+  die "invalid container name"
+
+[[ -f "$TOOLING/scripts/generate-deployment-plan.py" ]] ||
+  die "deployment-plan generator unavailable"
+
+[[ -d "$AUTHORITY/.git" || -f "$AUTHORITY/.git" ]] ||
+  die "authority checkout unavailable"
+
+AUTHORITY_STATUS="$(
+  /usr/sbin/runuser \
+    -u james \
+    -- \
+    /usr/bin/git \
+      -C "$AUTHORITY" \
+      status --porcelain
+)" || die "authority checkout status unavailable"
+
+[[ -z "$AUTHORITY_STATUS" ]] ||
+  die "authority checkout is not clean"
+
+cd "$TOOLING" || die "tooling directory unavailable"
+
+exec /usr/sbin/runuser \
+  -u james \
+  -- \
+  env \
+    HOME=/home/james \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    "$TOOLING/scripts/generate-deployment-plan.py" \
+    --authority-root "$AUTHORITY" \
+    --trivy-cache-dir "$CACHE" \
+    "$CONTAINER"
