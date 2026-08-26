@@ -1,0 +1,58 @@
+schema_version: 1
+
+defaults:
+  validation: read-only
+  deployment_allowed: false
+  required_labels:
+    - org.opencontainers.image.source
+    - org.opencontainers.image.revision
+    - org.opencontainers.image.created
+
+builds:
+  birdnet-exporter:
+    container: birdnet-exporter
+    service: birdnet-exporter
+    repository: jrwroberts1976/docker-env
+    authority_root: /var/tmp/docker-env-stage4
+    source_url: https://github.com/jrwroberts1976/docker-env
+    strategy: path-equivalence
+    compose_file: stacks/birdnet-go/docker-compose.yaml
+    expected_image: birdnet-go-birdnet-exporter:local
+    build_inputs:
+      - stacks/birdnet-go/docker-compose.yaml
+      - stacks/birdnet-go/birdnet-exporter
+      - scripts/build-birdnet-exporter.sh
+
+  crowdsec-exporter:
+    container: crowdsec-exporter
+    service: crowdsec-exporter
+    repository: jrwroberts1976/docker-env
+    authority_root: /var/tmp/docker-env-stage4
+    source_url: https://github.com/jrwroberts1976/docker-env
+    strategy: path-equivalence
+    compose_file: stacks/monitoring/docker-compose.yml
+    expected_image: monitoring-crowdsec-exporter:local
+    build_inputs:
+      - stacks/monitoring/docker-compose.yml
+      - stacks/monitoring/crowdsec-exporter
+      - scripts/build-crowdsec-exporter.sh
+
+  engineering-portfolio:
+    container: engineering-portfolio
+    service: engineering-portfolio
+    repository: jrwroberts1976/engineering-portfolio
+    authority_root: /home/james/projects/engineering-portfolio
+    source_url: https://github.com/jrwroberts1976/engineering-portfolio
+    strategy: exact-head
+    compose_file: compose.yml
+    expected_image: james-roberts/engineering-portfolio:local
+
+  projects-jrwroberts-co-uk:
+    container: projects-jrwroberts-co-uk
+    service: projects-site
+    repository: jrwroberts1976/projects-jrwroberts-co-uk
+    authority_root: /home/james/projects/projects-jrwroberts-co-uk
+    source_url: https://github.com/jrwroberts1976/projects-jrwroberts-co-uk
+    strategy: exact-head
+    compose_file: docker-compose.yml
+    expected_image: projects-jrwroberts-co-uk-projects-site:local
