@@ -1,0 +1,60 @@
+version: 1
+
+defaults:
+  host: TestServer
+  authority: docker-env
+  repository: jrwroberts1976/docker-env
+  runtime_root: /home/james/docker
+  source_root: /
+  image_type: registry-image
+  validation: read-only
+  deployment_allowed: false
+
+overrides:
+  - compose_project: birdnet-go
+    compose_service: birdnet-exporter
+    image_type: local-build
+
+  - compose_project: monitoring
+    compose_service: crowdsec-exporter
+    image_type: local-build
+
+  - compose_project: engineering-portfolio
+    compose_service: engineering-portfolio
+    authority: external-git
+    repository: jrwroberts1976/engineering-portfolio
+    source_compose: compose.yml
+    runtime_compose: /home/james/docker/stacks/engineering-portfolio/compose.yml
+    image_type: local-build
+    validation: read-only
+    deployment_allowed: false
+
+  - compose_project: projects-jrwroberts-co-uk
+    compose_service: projects-site
+    authority: external-git
+    repository: jrwroberts1976/projects-jrwroberts-co-uk
+    source_compose: docker-compose.yml
+    runtime_compose: /home/james/projects/projects-jrwroberts-co-uk/docker-compose.yml
+    image_type: local-build
+    validation: read-only
+    deployment_allowed: false
+
+  - compose_project: projects
+    compose_service: jenkins
+    authority: platform-exception
+    repository: null
+    runtime_compose: /home/james/projects/docker-compose.yml
+    image_type: local-build
+    exception: no-git-source
+    validation: read-only
+    deployment_allowed: false
+
+  - compose_project: projects
+    compose_service: docker
+    authority: platform-exception
+    repository: null
+    runtime_compose: /home/james/projects/docker-compose.yml
+    image_type: registry-image
+    exception: no-git-source
+    validation: read-only
+    deployment_allowed: false
