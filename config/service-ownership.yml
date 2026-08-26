@@ -6,10 +6,19 @@ defaults:
   repository: jrwroberts1976/docker-env
   runtime_root: /home/james/docker
   source_root: /
+  image_type: registry-image
   validation: read-only
   deployment_allowed: false
 
 overrides:
+  - compose_project: birdnet-go
+    compose_service: birdnet-exporter
+    image_type: local-build
+
+  - compose_project: monitoring
+    compose_service: crowdsec-exporter
+    image_type: local-build
+
   - compose_project: engineering-portfolio
     compose_service: engineering-portfolio
     authority: external-git
