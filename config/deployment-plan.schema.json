@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jrwroberts1976/homelab-container-version-control/config/deployment-plan.schema.json",
+  "title": "Stage 4 Read-Only Deployment Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "artifact",
+    "service",
+    "authority",
+    "runtime",
+    "candidate",
+    "gates",
+    "decision",
+    "deployment"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "mode": {
+      "const": "read-only"
+    },
+    "artifact": {
+      "const": "deployment-plan"
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "container",
+        "service",
+        "host",
+        "authority",
+        "repository",
+        "image_type"
+      ],
+      "properties": {
+        "container": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authority": {
+          "enum": [
+            "docker-env",
+            "external-git",
+            "platform-exception"
+          ]
+        },
+        "repository": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_type": {
+          "enum": [
+            "registry-image",
+            "local-build"
+          ]
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "compose_files"
+      ],
+      "properties": {
+        "revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "compose_files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "image_id",
+        "digest",
+        "platform"
+      ],
+      "properties": {
+        "image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/platform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "image",
+        "index_digest",
+        "platform_digest",
+        "platform"
+      ],
+      "properties": {
+        "image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform_digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/platform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ownership",
+        "comparison",
+        "architecture",
+        "security",
+        "secret_readiness",
+        "local_build_provenance"
+      ],
+      "properties": {
+        "ownership": {
+          "$ref": "#/$defs/simpleGate"
+        },
+        "comparison": {
+          "$ref": "#/$defs/comparisonGate"
+        },
+        "architecture": {
+          "$ref": "#/$defs/simpleGate"
+        },
+        "security": {
+          "$ref": "#/$defs/securityGate"
+        },
+        "secret_readiness": {
+          "$ref": "#/$defs/simpleGate"
+        },
+        "local_build_provenance": {
+          "$ref": "#/$defs/provenanceGate"
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result",
+        "proposed_action",
+        "reasons"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "no-change",
+            "ready-for-review",
+            "rebuild-required",
+            "blocked"
+          ]
+        },
+        "proposed_action": {
+          "enum": [
+            "none",
+            "deploy-registry-image",
+            "rebuild-local-image",
+            "manual-review"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed",
+        "performed"
+      ],
+      "properties": {
+        "allowed": {
+          "const": false
+        },
+        "performed": {
+          "const": false
+        }
+      }
+    }
+  },
+  "$defs": {
+    "simpleGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "pass",
+            "blocked",
+            "not-applicable"
+          ]
+        }
+      }
+    },
+    "comparisonGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "same",
+            "upgrade",
+            "downgrade-blocked",
+            "ordering-unknown-blocked",
+            "local-build-provenance-required",
+            "not-applicable"
+          ]
+        }
+      }
+    },
+    "securityGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "pass",
+            "security-blocked",
+            "blocked",
+            "not-applicable"
+          ]
+        }
+      }
+    },
+    "provenanceGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result"
+      ],
+      "properties": {
+        "result": {
+          "enum": [
+            "same",
+            "rebuild-required",
+            "provenance-blocked",
+            "not-applicable"
+          ]
+        }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "os",
+        "architecture"
+      ],
+      "properties": {
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "architecture": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
