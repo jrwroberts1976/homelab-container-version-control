@@ -1,0 +1,203 @@
+#!/bin/bash
+set -u
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+SERVICE="maintenance-page"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate"
+INNER_HELPER="/usr/local/libexec/homelab-stage5-maintenance-page"
+POLICY_FILE="/etc/homelab-stage5/maintenance-page.policy.json"
+ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"
+AUTHORITY_DIR="/var/lib/homelab-stage5/authority/docker-env"
+AUTHORITY_STACK="${AUTHORITY_DIR}/stacks/maintenance-page"
+LIVE_STACK="/home/james/docker/stacks/maintenance-page"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+policy_string() {
+  local query="$1"
+
+  jq -er \
+    "$query | strings | select(length > 0)" \
+    "$POLICY_FILE" \
+    2>/dev/null ||
+    fail "policy value unavailable: $query"
+}
+
+require_secure_root_file() {
+  local file="$1"
+
+  [ -f "$file" ] ||
+    fail "required root-owned file missing: $file"
+
+  [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+    fail "file is not root:root: $file"
+
+  if find "$file" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "file is group/other writable: $file"
+  fi
+}
+
+require_secure_root_dir() {
+  local dir="$1"
+
+  [ -d "$dir" ] ||
+    fail "required root-owned directory missing: $dir"
+
+  [ "$(stat -c '%U:%G' "$dir")" = "root:root" ] ||
+    fail "directory is not root:root: $dir"
+
+  if find "$dir" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "directory is group/other writable: $dir"
+  fi
+}
+
+verify_hash() {
+  local file="$1"
+  local expected="$2"
+  local actual
+
+  [ -f "$file" ] ||
+    fail "required configuration file missing: $file"
+
+  actual="$(sha256sum "$file" | awk '{print $1}')"
+
+  [ "$actual" = "$expected" ] ||
+    fail "configuration hash mismatch: $file"
+}
+
+require_installed_context() {
+  local self actual_gate_sha expected_gate_sha
+
+  [ "$(id -u)" -eq 0 ] ||
+    fail "authority gate execution requires root"
+
+  self="$(readlink -f "$0")"
+
+  [ "$self" = "$INSTALLED_SELF" ] ||
+    fail "authority gate is not running from reviewed installed path"
+
+  require_secure_root_file "$INSTALLED_SELF"
+  require_secure_root_file "$INNER_HELPER"
+  require_secure_root_file "$POLICY_FILE"
+  require_secure_root_file "$ENABLE_FILE"
+  require_secure_root_dir "$AUTHORITY_DIR"
+
+  actual_gate_sha="$(sha256sum "$INSTALLED_SELF" | awk '{print $1}')"
+  expected_gate_sha="$(policy_string '.implementation.authority_gate_sha256')"
+
+  [ "$actual_gate_sha" = "$expected_gate_sha" ] ||
+    fail "installed authority gate hash does not match policy"
+}
+
+require_execution_policy() {
+  local pilot_id enable_value authority_path
+
+  [ "$(policy_string '.schema_version | tostring')" = "1" ] ||
+    fail "unsupported policy schema"
+
+  [ "$(policy_string '.mode')" = "execution-enabled" ] ||
+    fail "policy mode is not execution-enabled"
+
+  [ "$(policy_string '.service')" = "$SERVICE" ] ||
+    fail "policy service mismatch"
+
+  [ "$(policy_string '.host')" = "TestServer" ] ||
+    fail "policy host mismatch"
+
+  authority_path="$(policy_string '.docker_env_authority_checkout')"
+
+  [ "$authority_path" = "$AUTHORITY_DIR" ] ||
+    fail "policy docker-env authority checkout mismatch"
+
+  pilot_id="$(policy_string '.pilot_id')"
+  enable_value="$(tr -d '\r\n' < "$ENABLE_FILE")"
+
+  [ "$enable_value" = "$pilot_id" ] ||
+    fail "enable file does not match policy pilot_id"
+}
+
+verify_git_authority() {
+  local expected_commit actual_commit status
+
+  expected_commit="$(policy_string '.docker_env_authority_commit')"
+
+  [[ "$expected_commit" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "docker-env authority commit is not pinned"
+
+  [ -e "$AUTHORITY_DIR/.git" ] ||
+    fail "docker-env authority checkout is not a Git worktree"
+
+  actual_commit="$(
+    git -C "$AUTHORITY_DIR" rev-parse HEAD 2>/dev/null
+  )" ||
+    fail "docker-env authority commit unavailable"
+
+  [ "$actual_commit" = "$expected_commit" ] ||
+    fail "docker-env authority commit does not match policy"
+
+  status="$(
+    git -C "$AUTHORITY_DIR" status --porcelain 2>/dev/null
+  )" ||
+    fail "docker-env authority checkout status unavailable"
+
+  [ -z "$status" ] ||
+    fail "docker-env authority checkout is not clean"
+}
+
+verify_authoritative_configuration() {
+  local compose_sha nginx_sha index_sha
+
+  compose_sha="$(policy_string '.configuration.compose_sha256')"
+  nginx_sha="$(policy_string '.configuration.nginx_config_sha256')"
+  index_sha="$(policy_string '.configuration.index_html_sha256')"
+
+  verify_hash \
+    "$AUTHORITY_STACK/docker-compose.yml" \
+    "$compose_sha"
+
+  verify_hash \
+    "$AUTHORITY_STACK/nginx/default.conf" \
+    "$nginx_sha"
+
+  verify_hash \
+    "$AUTHORITY_STACK/html/index.html" \
+    "$index_sha"
+
+  verify_hash \
+    "$LIVE_STACK/docker-compose.yml" \
+    "$compose_sha"
+
+  verify_hash \
+    "$LIVE_STACK/nginx/default.conf" \
+    "$nginx_sha"
+
+  verify_hash \
+    "$LIVE_STACK/html/index.html" \
+    "$index_sha"
+}
+
+ACTION="${1:-}"
+
+case "$ACTION" in
+  deploy|rollback)
+    ;;
+  *)
+    fail "action not permitted"
+    ;;
+esac
+
+require_installed_context
+require_execution_policy
+verify_git_authority
+verify_authoritative_configuration
+
+exec "$INNER_HELPER" "$ACTION"
