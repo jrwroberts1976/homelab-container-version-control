@@ -12,14 +12,15 @@ ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"
 STATE_DIR="/var/lib/homelab-stage5/maintenance-page"
 AUTHORITY_GATE="/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate"
 DEPLOY_HELPER="/usr/local/libexec/homelab-stage5-maintenance-page"
+INSPECTOR="/usr/local/libexec/homelab-stage5-maintenance-page-inspect"
 AUTHORITY_DIR="/var/lib/homelab-stage5/authority/docker-env"
 AUTHORITY_STACK="${AUTHORITY_DIR}/stacks/maintenance-page"
 LIVE_STACK="/home/james/docker/stacks/maintenance-page"
 
-EXPECTED_INSPECTION_POLICY_SHA256="REPLACE_AFTER_REVIEW"
-EXPECTED_EXECUTION_POLICY_SHA256="REPLACE_AFTER_REVIEW"
+EXPECTED_INSPECTION_POLICY_SHA256="adcac66121b04d4b0b4f0a9962c5e75e5c9b3a801a5b28f222f04a6670973f6f"
 EXPECTED_AUTHORITY_GATE_SHA256="561499a0e327f02e4df7fdabf40ab1d0660dc5ed51622061c568f9deaaa4dbda"
 EXPECTED_DEPLOY_HELPER_SHA256="a0df7b46aa01ffc9ef3fbf43cea43caeef34681ef22b759ae822ed2832cfc42a"
+EXPECTED_INSPECTOR_SHA256="64dc6526e66a9e6878ca23c1703a9d7bb11c82b7f60cf7b8aae714b2ed9cb213"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -77,14 +78,14 @@ require_review_constants() {
   [[ "$EXPECTED_INSPECTION_POLICY_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
     fail "inspection policy SHA256 is not review-pinned"
 
-  [[ "$EXPECTED_EXECUTION_POLICY_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
-    fail "execution policy SHA256 is not review-pinned"
-
   [[ "$EXPECTED_AUTHORITY_GATE_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
     fail "authority gate SHA256 is not review-pinned"
 
   [[ "$EXPECTED_DEPLOY_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
     fail "deployment helper SHA256 is not review-pinned"
+
+  [[ "$EXPECTED_INSPECTOR_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "inspector SHA256 is not review-pinned"
 }
 
 require_installed_context() {
@@ -104,6 +105,7 @@ require_installed_context() {
   require_secure_root_file "$EXECUTION_POLICY"
   require_secure_root_file "$AUTHORITY_GATE"
   require_secure_root_file "$DEPLOY_HELPER"
+  require_secure_root_file "$INSPECTOR"
   require_secure_root_dir "$STATE_DIR"
   require_secure_root_dir "$AUTHORITY_DIR"
 
@@ -112,6 +114,9 @@ require_installed_context() {
 
   [ "$(sha256_of "$DEPLOY_HELPER")" = "$EXPECTED_DEPLOY_HELPER_SHA256" ] ||
     fail "deployment helper hash mismatch"
+
+  [ "$(sha256_of "$INSPECTOR")" = "$EXPECTED_INSPECTOR_SHA256" ] ||
+    fail "inspector hash mismatch"
 }
 
 verify_policy_pair() {
@@ -121,18 +126,21 @@ verify_policy_pair() {
   local inspect_commit execute_commit
   local inspect_candidate execute_candidate
   local inspect_rollback execute_rollback
+  local inspect_config execute_config
+  local implementation_commit
 
   [ "$(sha256_of "$ACTIVE_POLICY")" = "$EXPECTED_INSPECTION_POLICY_SHA256" ] ||
     fail "active inspection policy hash mismatch"
-
-  [ "$(sha256_of "$EXECUTION_POLICY")" = "$EXPECTED_EXECUTION_POLICY_SHA256" ] ||
-    fail "staged execution policy hash mismatch"
 
   [ "$(policy_string "$ACTIVE_POLICY" '.mode')" = "inspection-ready" ] ||
     fail "active policy is not inspection-ready"
 
   [ "$(policy_string "$EXECUTION_POLICY" '.mode')" = "execution-enabled" ] ||
     fail "staged policy is not execution-enabled"
+
+  if grep -Fq 'REPLACE_AFTER_REVIEW' "$EXECUTION_POLICY"; then
+    fail "staged execution policy still contains review placeholders"
+  fi
 
   inspect_pilot="$(policy_string "$ACTIVE_POLICY" '.pilot_id')"
   execute_pilot="$(policy_string "$EXECUTION_POLICY" '.pilot_id')"
@@ -146,6 +154,8 @@ verify_policy_pair() {
   execute_candidate="$(policy_string "$EXECUTION_POLICY" '.images.candidate')"
   inspect_rollback="$(policy_string "$ACTIVE_POLICY" '.images.rollback')"
   execute_rollback="$(policy_string "$EXECUTION_POLICY" '.images.rollback')"
+  inspect_config="$(jq -cS '.configuration' "$ACTIVE_POLICY")"
+  execute_config="$(jq -cS '.configuration' "$EXECUTION_POLICY")"
 
   [ "$inspect_pilot" = "$execute_pilot" ] ||
     fail "pilot ID changes across policy transition"
@@ -166,6 +176,22 @@ verify_policy_pair() {
 
   [ "$inspect_rollback" = "$execute_rollback" ] ||
     fail "rollback changes across policy transition"
+
+  [ "$inspect_config" = "$execute_config" ] ||
+    fail "configuration hashes change across policy transition"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.implementation.authority_gate_sha256')" = "$EXPECTED_AUTHORITY_GATE_SHA256" ] ||
+    fail "execution policy authority-gate hash mismatch"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.implementation.helper_sha256')" = "$EXPECTED_DEPLOY_HELPER_SHA256" ] ||
+    fail "execution policy helper hash mismatch"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.implementation.inspector_sha256')" = "$EXPECTED_INSPECTOR_SHA256" ] ||
+    fail "execution policy inspector hash mismatch"
+
+  implementation_commit="$(policy_string "$EXECUTION_POLICY" '.implementation.implementation_commit')"
+  [[ "$implementation_commit" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "execution policy implementation commit is not pinned"
 
   jq -e '
     .inspection.allowed == true
@@ -293,7 +319,7 @@ verify_health() {
 }
 
 arm_pilot() {
-  local pilot candidate rollback consumed backup policy_tmp enable_tmp armed
+  local pilot candidate rollback consumed backup policy_tmp enable_tmp armed execution_policy_sha
 
   require_installed_context
   verify_policy_pair
@@ -307,6 +333,7 @@ arm_pilot() {
   candidate="$(policy_string "$ACTIVE_POLICY" '.images.candidate')"
   rollback="$(policy_string "$ACTIVE_POLICY" '.images.rollback')"
   consumed="${STATE_DIR}/${pilot}.consumed"
+  execution_policy_sha="$(sha256_of "$EXECUTION_POLICY")"
 
   [ ! -e "$consumed" ] ||
     fail "pilot ID has already been consumed"
@@ -351,8 +378,8 @@ arm_pilot() {
   chmod 0600 "$enable_tmp"
   mv -f "$enable_tmp" "$ENABLE_FILE"
 
-  [ "$(sha256_of "$ACTIVE_POLICY")" = "$EXPECTED_EXECUTION_POLICY_SHA256" ] ||
-    fail "active execution policy hash mismatch after transition"
+  [ "$(sha256_of "$ACTIVE_POLICY")" = "$execution_policy_sha" ] ||
+    fail "active policy does not exactly match staged execution policy"
 
   [ "$(tr -d '\r\n' < "$ENABLE_FILE")" = "$pilot" ] ||
     fail "enable file pilot ID mismatch after transition"
@@ -364,12 +391,14 @@ arm_pilot() {
   jq -n \
     --arg pilot_id "$pilot" \
     --arg service "$SERVICE" \
+    --arg policy_sha256 "$execution_policy_sha" \
     '{
       schema_version: 1,
       mode: "stage5-execution-transition",
       action: "arm",
       pilot_id: $pilot_id,
       service: $service,
+      execution_policy_sha256: $policy_sha256,
       deployment: {
         activated: true,
         performed: false
@@ -383,8 +412,8 @@ disarm_pilot() {
 
   require_installed_context
 
-  [ "$(sha256_of "$ACTIVE_POLICY")" = "$EXPECTED_EXECUTION_POLICY_SHA256" ] ||
-    fail "active policy is not exact execution policy"
+  [ "$(sha256_of "$ACTIVE_POLICY")" = "$(sha256_of "$EXECUTION_POLICY")" ] ||
+    fail "active policy does not match staged execution policy"
 
   require_secure_root_file "$ENABLE_FILE"
 
