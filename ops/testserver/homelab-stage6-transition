@@ -1,0 +1,277 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+MANIFEST_DIR="/etc/homelab-stage6/services"
+VALIDATOR="/usr/local/libexec/homelab-stage6-validate-service-manifest"
+INSPECTOR="/usr/local/libexec/homelab-stage6-inspect"
+EXECUTOR_HELPER="/usr/local/libexec/homelab-stage6-execute"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage6-transition"
+STATE_ROOT="/var/lib/homelab-stage6/state"
+
+fail() {
+    printf 'FAIL: %s\n' "$1" >&2
+    exit 2
+}
+
+require_secure_root_file() {
+    local file="$1"
+
+    [ -f "$file" ] || fail "required root-owned file missing: $file"
+    [ ! -L "$file" ] || fail "root-owned file must not be a symlink: $file"
+    [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+        fail "file is not root:root: $file"
+
+    if find "$file" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+        fail "file is group/other writable: $file"
+    fi
+}
+
+require_secure_root_dir() {
+    local dir="$1"
+
+    [ -d "$dir" ] || fail "required root-owned directory missing: $dir"
+    [ ! -L "$dir" ] || fail "root-owned directory must not be a symlink: $dir"
+    [ "$(stat -c '%U:%G' "$dir")" = "root:root" ] ||
+        fail "directory is not root:root: $dir"
+
+    if find "$dir" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+        fail "directory is group/other writable: $dir"
+    fi
+}
+
+manifest_string() {
+    local query="$1"
+
+    jq -er "$query | strings | select(length > 0)" "$MANIFEST" 2>/dev/null ||
+        fail "manifest value unavailable: $query"
+}
+
+load_manifest() {
+    MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"
+
+    require_secure_root_file "$MANIFEST"
+    "$VALIDATOR" "$MANIFEST" >/dev/null || fail "service manifest validation failed"
+
+    [ "$(manifest_string '.service.name')" = "$SERVICE" ] || fail "manifest service mismatch"
+    [ "$(manifest_string '.service.container')" = "$SERVICE" ] || fail "manifest container mismatch"
+    [ "$(manifest_string '.service.host')" = "TestServer" ] || fail "manifest host mismatch"
+    [ "$(manifest_string '.service.image_type')" = "registry-image" ] || fail "unsupported image type"
+
+    TARGET_CONTAINER="$(manifest_string '.service.container')"
+    ROLLBACK_VERSION="$(manifest_string '.versions.rollback.version')"
+    ROLLBACK_REF="$(manifest_string '.versions.rollback.immutable_ref')"
+    ROLLBACK_LOCAL_ID="$(manifest_string '.versions.rollback.local_image_id')"
+    CANDIDATE_VERSION="$(manifest_string '.versions.candidate.version')"
+    CANDIDATE_REF="$(manifest_string '.versions.candidate.immutable_ref')"
+    CANDIDATE_CONFIG_DIGEST="$(manifest_string '.versions.candidate.config_digest')"
+    CANDIDATE_INDEX_DIGEST="$(manifest_string '.versions.candidate.index_digest')"
+
+    UPDATE_ID="stage6-${SERVICE}-${CANDIDATE_INDEX_DIGEST#sha256:}"
+    SERVICE_STATE_DIR="${STATE_ROOT}/${SERVICE}"
+    ENABLE_FILE="${SERVICE_STATE_DIR}/enable"
+    CONSUMED_FILE="${SERVICE_STATE_DIR}/${UPDATE_ID}.consumed"
+}
+
+require_installed_context() {
+    [ "$(id -u)" -eq 0 ] || fail "transition helper requires root"
+    [ "$(readlink -f "$0")" = "$INSTALLED_SELF" ] ||
+        fail "transition helper is not running from reviewed installed path"
+
+    require_secure_root_file "$INSTALLED_SELF"
+    require_secure_root_file "$VALIDATOR"
+    require_secure_root_file "$INSPECTOR"
+    require_secure_root_file "$EXECUTOR_HELPER"
+
+    require_secure_root_dir "/var/lib/homelab-stage6"
+}
+
+run_preapproval_inspection() {
+    local artifact
+
+    artifact="$(mktemp)"
+
+    if ! "$INSPECTOR" "$SERVICE" >"$artifact"; then
+        rm -f "$artifact"
+        fail "generic pre-approval inspection failed"
+    fi
+
+    jq -e \
+        --arg service "$SERVICE" \
+        --arg rollback_ref "$ROLLBACK_REF" \
+        --arg rollback_id "$ROLLBACK_LOCAL_ID" \
+        --arg candidate_ref "$CANDIDATE_REF" \
+        --arg candidate_id "$CANDIDATE_CONFIG_DIGEST" '
+          .schema_version == 1
+          and .artifact == "service-update-inspection"
+          and .mode == "stage6-preapproval-inspect"
+          and .service == $service
+          and .current.state == "rollback"
+          and .rollback.immutable_ref == $rollback_ref
+          and .rollback.local_image_id == $rollback_id
+          and .candidate.immutable_ref == $candidate_ref
+          and .candidate.local_image_id == $candidate_id
+          and .runtime.invariants == "pass"
+          and .approval.required == true
+          and .approval.granted == false
+          and .deployment.allowed == false
+          and .deployment.performed == false
+          and .result == "ready-for-human-review"
+        ' "$artifact" >/dev/null || {
+            rm -f "$artifact"
+            fail "generic inspection artifact did not satisfy arm preconditions"
+        }
+
+    rm -f "$artifact"
+}
+
+verify_terminal_health() {
+    local strategy expected status url marker tmp code
+
+    strategy="$(manifest_string '.health.strategy')"
+
+    case "$strategy" in
+        docker-health)
+            expected="$(manifest_string '.health.expected')"
+            status="$(docker inspect "$TARGET_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null)" ||
+                fail "target health state unavailable"
+            [ "$status" = "$expected" ] || fail "target health is not terminal-healthy"
+            ;;
+        http)
+            url="$(manifest_string '.health.url')"
+            expected="$(jq -r '.health.expected_status' "$MANIFEST")"
+            marker="$(jq -r '.health.marker // ""' "$MANIFEST")"
+            tmp="$(mktemp)"
+            code="$(curl -sS -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null || true)"
+            [ "$code" = "$expected" ] || {
+                rm -f "$tmp"
+                fail "target HTTP health status is not terminal-healthy"
+            }
+            if [ -n "$marker" ]; then
+                grep -Fq "$marker" "$tmp" || {
+                    rm -f "$tmp"
+                    fail "target HTTP health marker missing"
+                }
+            fi
+            rm -f "$tmp"
+            ;;
+        *)
+            fail "unsupported health strategy"
+            ;;
+    esac
+}
+
+arm() {
+    local tmp enable_value
+
+    [ ! -e "$ENABLE_FILE" ] || fail "service is already armed"
+    [ ! -e "$CONSUMED_FILE" ] || fail "reviewed update ID is already consumed"
+
+    run_preapproval_inspection
+
+    install -d -o root -g root -m 0700 "$STATE_ROOT"
+    install -d -o root -g root -m 0700 "$SERVICE_STATE_DIR"
+    require_secure_root_dir "$STATE_ROOT"
+    require_secure_root_dir "$SERVICE_STATE_DIR"
+
+    tmp="$(mktemp "${SERVICE_STATE_DIR}/enable.tmp.XXXXXX")"
+    printf '%s\n' "$UPDATE_ID" >"$tmp"
+    chown root:root "$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$ENABLE_FILE"
+
+    require_secure_root_file "$ENABLE_FILE"
+    enable_value="$(tr -d '\r\n' <"$ENABLE_FILE")"
+    [ "$enable_value" = "$UPDATE_ID" ] || fail "enable file identity mismatch after arm"
+
+    jq -n \
+        --arg service "$SERVICE" \
+        --arg update_id "$UPDATE_ID" \
+        --arg rollback_version "$ROLLBACK_VERSION" \
+        --arg rollback_ref "$ROLLBACK_REF" \
+        --arg candidate_version "$CANDIDATE_VERSION" \
+        --arg candidate_ref "$CANDIDATE_REF" '
+        {
+          schema_version: 1,
+          artifact: "stage6-transition",
+          action: "arm",
+          service: $service,
+          update_id: $update_id,
+          rollback: {version: $rollback_version, immutable_ref: $rollback_ref},
+          candidate: {version: $candidate_version, immutable_ref: $candidate_ref},
+          container_mutation_performed: false,
+          deployment_authority: true,
+          result: "armed"
+        }'
+}
+
+disarm() {
+    local enable_value current_image consumed
+
+    require_secure_root_dir "$STATE_ROOT"
+    require_secure_root_dir "$SERVICE_STATE_DIR"
+    require_secure_root_file "$ENABLE_FILE"
+
+    enable_value="$(tr -d '\r\n' <"$ENABLE_FILE")"
+    [ "$enable_value" = "$UPDATE_ID" ] || fail "enable file update ID mismatch"
+
+    current_image="$(docker inspect "$TARGET_CONTAINER" --format '{{.Image}}' 2>/dev/null)" ||
+        fail "target container unavailable during disarm"
+
+    if [ -e "$CONSUMED_FILE" ]; then
+        require_secure_root_file "$CONSUMED_FILE"
+        consumed=true
+        if [ "$current_image" != "$CANDIDATE_CONFIG_DIGEST" ] && [ "$current_image" != "$ROLLBACK_LOCAL_ID" ]; then
+            fail "consumed update target is neither exact candidate nor rollback image"
+        fi
+    else
+        consumed=false
+        [ "$current_image" = "$ROLLBACK_LOCAL_ID" ] ||
+            fail "unconsumed arm can only be cancelled while exact rollback remains current"
+    fi
+
+    verify_terminal_health
+    rm -f "$ENABLE_FILE"
+    [ ! -e "$ENABLE_FILE" ] || fail "enable file remained after disarm"
+
+    jq -n \
+        --arg service "$SERVICE" \
+        --arg update_id "$UPDATE_ID" \
+        --argjson consumed "$consumed" '
+        {
+          schema_version: 1,
+          artifact: "stage6-transition",
+          action: "disarm",
+          service: $service,
+          update_id: $update_id,
+          consumed: $consumed,
+          container_mutation_performed: false,
+          deployment_authority: false,
+          result: "disarmed"
+        }'
+}
+
+[ "$(id -u)" -eq 0 ] || fail "transition helper requires root"
+[ "$#" -eq 2 ] || fail "usage: homelab-stage6-transition ACTION SERVICE"
+
+ACTION="$1"
+SERVICE="$2"
+
+[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid service name"
+
+require_installed_context
+load_manifest
+
+case "$ACTION" in
+    arm)
+        arm
+        ;;
+    disarm)
+        disarm
+        ;;
+    *)
+        fail "action not permitted"
+        ;;
+esac

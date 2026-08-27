@@ -1,0 +1,395 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+MANIFEST_DIR="/etc/homelab-stage6/services"
+VALIDATOR="/usr/local/libexec/homelab-stage6-validate-service-manifest"
+INSPECTOR="/usr/local/libexec/homelab-stage6-inspect"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage6-execute"
+AUTHORITY_ROOT="/var/lib/homelab-stage6/authority/docker-env"
+LIVE_ROOT="/home/james/docker"
+STATE_ROOT="/var/lib/homelab-stage6/state"
+
+fail() {
+    printf 'FAIL: %s\n' "$1" >&2
+    exit 2
+}
+
+require_secure_root_file() {
+    local file="$1"
+    [ -f "$file" ] || fail "required root-owned file missing: $file"
+    [ ! -L "$file" ] || fail "root-owned file must not be a symlink: $file"
+    [ "$(stat -c '%U:%G' "$file")" = "root:root" ] || fail "file is not root:root: $file"
+    if find "$file" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+        fail "file is group/other writable: $file"
+    fi
+}
+
+require_secure_root_dir() {
+    local dir="$1"
+    [ -d "$dir" ] || fail "required root-owned directory missing: $dir"
+    [ ! -L "$dir" ] || fail "root-owned directory must not be a symlink: $dir"
+    [ "$(stat -c '%U:%G' "$dir")" = "root:root" ] || fail "directory is not root:root: $dir"
+    if find "$dir" -maxdepth 0 -perm /022 -print -quit | grep -q .; then
+        fail "directory is group/other writable: $dir"
+    fi
+}
+
+manifest_string() {
+    local query="$1"
+    jq -er "$query | strings | select(length > 0)" "$MANIFEST" 2>/dev/null ||
+        fail "manifest value unavailable: $query"
+}
+
+verify_hash() {
+    local file="$1" expected="$2" actual
+    [ -f "$file" ] || fail "required file missing: $file"
+    [ ! -L "$file" ] || fail "required file must not be a symlink: $file"
+    actual="$(sha256sum "$file" | awk '{print $1}')"
+    [ "$actual" = "$expected" ] || fail "SHA-256 mismatch: $file"
+}
+
+load_manifest() {
+    MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"
+    require_secure_root_file "$MANIFEST"
+    "$VALIDATOR" "$MANIFEST" >/dev/null || fail "service manifest validation failed"
+
+    [ "$(manifest_string '.service.name')" = "$SERVICE" ] || fail "manifest service mismatch"
+    [ "$(manifest_string '.service.container')" = "$SERVICE" ] || fail "manifest container mismatch"
+    [ "$(manifest_string '.service.host')" = "TestServer" ] || fail "manifest host mismatch"
+    [ "$(manifest_string '.service.image_type')" = "registry-image" ] || fail "unsupported image type"
+
+    TARGET_CONTAINER="$(manifest_string '.service.container')"
+    COMPOSE_PROJECT="$(manifest_string '.service.compose.project')"
+    COMPOSE_SERVICE="$(manifest_string '.service.compose.service')"
+    PROJECT_DIR="$(manifest_string '.service.compose.project_directory')"
+    COMPOSE_FILE="$(manifest_string '.service.compose.compose_file')"
+    IMAGE_VARIABLE="$(manifest_string '.service.compose.image_variable')"
+
+    ROLLBACK_VERSION="$(manifest_string '.versions.rollback.version')"
+    ROLLBACK_REPOSITORY="$(manifest_string '.versions.rollback.image_repository')"
+    ROLLBACK_REF="$(manifest_string '.versions.rollback.immutable_ref')"
+    ROLLBACK_LOCAL_ID="$(manifest_string '.versions.rollback.local_image_id')"
+    ROLLBACK_OS="$(manifest_string '.versions.rollback.platform.os')"
+    ROLLBACK_ARCH="$(manifest_string '.versions.rollback.platform.architecture')"
+
+    CANDIDATE_VERSION="$(manifest_string '.versions.candidate.version')"
+    CANDIDATE_REF="$(manifest_string '.versions.candidate.immutable_ref')"
+    CANDIDATE_INDEX_DIGEST="$(manifest_string '.versions.candidate.index_digest')"
+    CANDIDATE_CONFIG_DIGEST="$(manifest_string '.versions.candidate.config_digest')"
+    CANDIDATE_OS="$(manifest_string '.versions.candidate.platform.os')"
+    CANDIDATE_ARCH="$(manifest_string '.versions.candidate.platform.architecture')"
+
+    UPDATE_ID="stage6-${SERVICE}-${CANDIDATE_INDEX_DIGEST#sha256:}"
+    SERVICE_STATE_DIR="${STATE_ROOT}/${SERVICE}"
+    ENABLE_FILE="${SERVICE_STATE_DIR}/enable"
+    CONSUMED_FILE="${SERVICE_STATE_DIR}/${UPDATE_ID}.consumed"
+}
+
+require_installed_context() {
+    [ "$(id -u)" -eq 0 ] || fail "execution helper requires root"
+    [ "$(readlink -f "$0")" = "$INSTALLED_SELF" ] || fail "execution helper is not running from reviewed installed path"
+    require_secure_root_file "$INSTALLED_SELF"
+    require_secure_root_file "$VALIDATOR"
+    require_secure_root_file "$INSPECTOR"
+    require_secure_root_dir "/var/lib/homelab-stage6"
+    require_secure_root_dir "$AUTHORITY_ROOT"
+}
+
+require_armed() {
+    local enable_value
+    require_secure_root_dir "$STATE_ROOT"
+    require_secure_root_dir "$SERVICE_STATE_DIR"
+    require_secure_root_file "$ENABLE_FILE"
+    enable_value="$(tr -d '\r\n' <"$ENABLE_FILE")"
+    [ "$enable_value" = "$UPDATE_ID" ] || fail "enable file update ID mismatch"
+}
+
+verify_git_authority() {
+    local expected_commit expected_sha actual_commit status relative resolved authority_compose
+
+    expected_commit="$(manifest_string '.authority.revision')"
+    expected_sha="$(manifest_string '.authority.compose_sha256')"
+    actual_commit="$(git -C "$AUTHORITY_ROOT" rev-parse HEAD 2>/dev/null)" || fail "authority Git commit unavailable"
+    [ "$actual_commit" = "$expected_commit" ] || fail "authority Git commit mismatch"
+    status="$(git -C "$AUTHORITY_ROOT" status --porcelain 2>/dev/null)" || fail "authority Git status unavailable"
+    [ -z "$status" ] || fail "authority checkout is not clean"
+
+    [[ "$COMPOSE_FILE" = "$LIVE_ROOT/"* ]] || fail "live Compose path outside fixed runtime root"
+    relative="${COMPOSE_FILE#${LIVE_ROOT}/}"
+    [[ "/$relative/" != *"/../"* ]] || fail "authority path traversal blocked"
+    authority_compose="${AUTHORITY_ROOT}/${relative}"
+    resolved="$(readlink -f "$authority_compose")"
+    [[ "$resolved" = "$AUTHORITY_ROOT/"* ]] || fail "authority Compose escapes checkout"
+
+    verify_hash "$authority_compose" "$expected_sha"
+    verify_hash "$COMPOSE_FILE" "$expected_sha"
+}
+
+verify_local_images() {
+    local rollback_json candidate_json
+
+    rollback_json="$(docker image inspect "$ROLLBACK_REF" 2>/dev/null)" || fail "rollback immutable image is not local"
+    candidate_json="$(docker image inspect "$CANDIDATE_REF" 2>/dev/null)" || fail "candidate immutable image is not local"
+
+    [ "$(jq -r '.[0].Id' <<<"$rollback_json")" = "$ROLLBACK_LOCAL_ID" ] || fail "rollback local image ID mismatch"
+    [ "$(jq -r '.[0].Os' <<<"$rollback_json")" = "$ROLLBACK_OS" ] || fail "rollback OS mismatch"
+    [ "$(jq -r '.[0].Architecture' <<<"$rollback_json")" = "$ROLLBACK_ARCH" ] || fail "rollback architecture mismatch"
+    jq -e --arg ref "$ROLLBACK_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$rollback_json" >/dev/null || fail "rollback RepoDigest mismatch"
+
+    [ "$(jq -r '.[0].Id' <<<"$candidate_json")" = "$CANDIDATE_CONFIG_DIGEST" ] || fail "candidate local image ID mismatch"
+    [ "$(jq -r '.[0].Os' <<<"$candidate_json")" = "$CANDIDATE_OS" ] || fail "candidate OS mismatch"
+    [ "$(jq -r '.[0].Architecture' <<<"$candidate_json")" = "$CANDIDATE_ARCH" ] || fail "candidate architecture mismatch"
+    jq -e --arg ref "$CANDIDATE_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$candidate_json" >/dev/null || fail "candidate RepoDigest mismatch"
+}
+
+verify_runtime_shape() {
+    local expected_image_id="$1" expected_config_image="$2"
+    local container_json expected_networks actual_networks expected_ports actual_ports
+    local expected_mounts actual_mounts expected_user expected_privileged expected_readonly expected_restart
+    local source expected_sha actual_sha
+
+    container_json="$(docker inspect "$TARGET_CONTAINER" 2>/dev/null)" || fail "target container unavailable"
+    [ "$(jq -r '.[0].State.Running' <<<"$container_json")" = "true" ] || fail "target container is not running"
+    [ "$(jq -r '.[0].Image' <<<"$container_json")" = "$expected_image_id" ] || fail "target image ID mismatch"
+    [ "$(jq -r '.[0].Config.Image' <<<"$container_json")" = "$expected_config_image" ] || fail "target configured image mismatch"
+
+    expected_networks="$(jq -c '.runtime.networks | sort' "$MANIFEST")"
+    actual_networks="$(jq -c '.[0].NetworkSettings.Networks | keys | sort' <<<"$container_json")"
+    [ "$actual_networks" = "$expected_networks" ] || fail "target network membership mismatch"
+
+    expected_ports="$(jq -c '.runtime.published_ports | sort_by(.container_port, .protocol, .host_ip, .host_port)' "$MANIFEST")"
+    actual_ports="$(jq -c '[((.[0].NetworkSettings.Ports // {}) | to_entries[]) as $e | select($e.value != null) | ($e.key | capture("^(?<port>[0-9]+)/(?<protocol>tcp|udp)$")) as $cp | $e.value[] | {host_ip:.HostIp,host_port:(.HostPort|tonumber),container_port:($cp.port|tonumber),protocol:$cp.protocol}] | sort_by(.container_port,.protocol,.host_ip,.host_port)' <<<"$container_json")"
+    [ "$actual_ports" = "$expected_ports" ] || fail "target published-port shape mismatch"
+
+    expected_mounts="$(jq -c '[.runtime.mounts[] | {type,source,destination,rw}] | sort_by(.destination,.source)' "$MANIFEST")"
+    actual_mounts="$(jq -c '[.[0].Mounts[] | {type:.Type,source:.Source,destination:.Destination,rw:.RW}] | sort_by(.destination,.source)' <<<"$container_json")"
+    [ "$actual_mounts" = "$expected_mounts" ] || fail "target mount shape mismatch"
+
+    while IFS=$'\t' read -r source expected_sha; do
+        [ -n "$source" ] || continue
+        [ -f "$source" ] || fail "bind-mount source missing: $source"
+        actual_sha="$(sha256sum "$source" | awk '{print $1}')"
+        [ "$actual_sha" = "$expected_sha" ] || fail "bind-mount content hash mismatch: $source"
+    done < <(jq -r '.runtime.mounts[] | select(.type == "bind") | [.source,.sha256] | @tsv' "$MANIFEST")
+
+    expected_user="$(manifest_string '.runtime.user')"
+    expected_privileged="$(jq -r '.runtime.privileged' "$MANIFEST")"
+    expected_readonly="$(jq -r '.runtime.readonly_rootfs' "$MANIFEST")"
+    expected_restart="$(manifest_string '.runtime.restart_policy')"
+
+    [ "$(jq -r '.[0].Config.User // ""' <<<"$container_json")" = "$expected_user" ] || fail "target user mismatch"
+    [ "$(jq -r '.[0].HostConfig.Privileged' <<<"$container_json")" = "$expected_privileged" ] || fail "target privileged state mismatch"
+    [ "$(jq -r '.[0].HostConfig.ReadonlyRootfs' <<<"$container_json")" = "$expected_readonly" ] || fail "target read-only rootfs state mismatch"
+    [ "$(jq -r '.[0].HostConfig.RestartPolicy.Name' <<<"$container_json")" = "$expected_restart" ] || fail "target restart policy mismatch"
+    [ "$(jq -r '.[0].HostConfig.Devices | length' <<<"$container_json")" = "0" ] || fail "target unexpectedly has device mappings"
+    jq -e '[.[0].Mounts[] | select((.Source|contains("docker.sock")) or (.Destination|contains("docker.sock")))] | length == 0' <<<"$container_json" >/dev/null || fail "target unexpectedly has Docker socket mount"
+}
+
+wait_for_health() {
+    local strategy timeout elapsed expected status url marker tmp code
+
+    strategy="$(manifest_string '.health.strategy')"
+    timeout="$(jq -r '.health.timeout_seconds' "$MANIFEST")"
+    elapsed=0
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        case "$strategy" in
+            docker-health)
+                expected="$(manifest_string '.health.expected')"
+                status="$(docker inspect "$TARGET_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || true)"
+                if [ "$status" = "$expected" ]; then
+                    HEALTH_RESULT="$status"
+                    return 0
+                fi
+                ;;
+            http)
+                url="$(manifest_string '.health.url')"
+                expected="$(jq -r '.health.expected_status' "$MANIFEST")"
+                marker="$(jq -r '.health.marker // ""' "$MANIFEST")"
+                tmp="$(mktemp)"
+                code="$(curl -sS -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null || true)"
+                if [ "$code" = "$expected" ] && { [ -z "$marker" ] || grep -Fq "$marker" "$tmp"; }; then
+                    rm -f "$tmp"
+                    HEALTH_RESULT="http-${code}"
+                    return 0
+                fi
+                rm -f "$tmp"
+                ;;
+            *)
+                fail "unsupported health strategy"
+                ;;
+        esac
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    fail "target did not satisfy health contract before timeout"
+}
+
+build_container_state() {
+    docker ps -aq | xargs -r docker inspect | jq -c '[.[] | {name:(.Name|ltrimstr("/")),container_id:.Id,restart_count:.RestartCount,running:.State.Running}] | sort_by(.name)'
+}
+
+verify_unrelated_unchanged() {
+    local before="$1" after="$2" before_other after_other
+    before_other="$(jq -c --arg target "$TARGET_CONTAINER" '[.[] | select(.name != $target)]' <<<"$before")"
+    after_other="$(jq -c --arg target "$TARGET_CONTAINER" '[.[] | select(.name != $target)]' <<<"$after")"
+    [ "$before_other" = "$after_other" ] || fail "unrelated container state changed"
+}
+
+compose_recreate() {
+    local image="$1" rc
+    set +e
+    env "$IMAGE_VARIABLE=$image" \
+        docker compose \
+            --project-directory "$PROJECT_DIR" \
+            -p "$COMPOSE_PROJECT" \
+            -f "$COMPOSE_FILE" \
+            up -d \
+            --no-deps \
+            --no-build \
+            --pull never \
+            --force-recreate \
+            "$COMPOSE_SERVICE"
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] || fail "Compose recreate failed; update remains armed/consumed"
+}
+
+mark_consumed() {
+    local tmp
+    [ ! -e "$CONSUMED_FILE" ] || fail "reviewed update ID is already consumed"
+    tmp="$(mktemp "${SERVICE_STATE_DIR}/${UPDATE_ID}.consumed.tmp.XXXXXX")"
+    printf '%s\n' "$UPDATE_ID" >"$tmp"
+    chown root:root "$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$CONSUMED_FILE"
+    require_secure_root_file "$CONSUMED_FILE"
+}
+
+run_predeployment_inspection() {
+    local artifact
+    artifact="$(mktemp)"
+    if ! "$INSPECTOR" "$SERVICE" >"$artifact"; then
+        rm -f "$artifact"
+        fail "generic pre-deployment inspection failed"
+    fi
+    jq -e --arg service "$SERVICE" --arg rollback "$ROLLBACK_REF" --arg candidate "$CANDIDATE_REF" '
+      .artifact == "service-update-inspection"
+      and .service == $service
+      and .current.state == "rollback"
+      and .rollback.immutable_ref == $rollback
+      and .candidate.immutable_ref == $candidate
+      and .runtime.invariants == "pass"
+      and .result == "ready-for-human-review"
+      and .deployment.allowed == false
+    ' "$artifact" >/dev/null || {
+        rm -f "$artifact"
+        fail "pre-deployment inspection artifact mismatch"
+    }
+    rm -f "$artifact"
+}
+
+emit_result() {
+    local action="$1" result="$2" before_id="$3" after_id="$4"
+    jq -n \
+        --arg action "$action" \
+        --arg result "$result" \
+        --arg service "$SERVICE" \
+        --arg update_id "$UPDATE_ID" \
+        --arg rollback_version "$ROLLBACK_VERSION" \
+        --arg rollback_ref "$ROLLBACK_REF" \
+        --arg candidate_version "$CANDIDATE_VERSION" \
+        --arg candidate_ref "$CANDIDATE_REF" \
+        --arg before_id "$before_id" \
+        --arg after_id "$after_id" \
+        --arg health_result "$HEALTH_RESULT" '
+        {
+          schema_version: 1,
+          artifact: "stage6-execution-result",
+          action: $action,
+          service: $service,
+          update_id: $update_id,
+          rollback: {version:$rollback_version,immutable_ref:$rollback_ref},
+          candidate: {version:$candidate_version,immutable_ref:$candidate_ref},
+          target: {container_id_before:$before_id,container_id_after:$after_id},
+          health_result: $health_result,
+          container_mutation_performed: true,
+          unrelated_containers_unchanged: true,
+          consumed: true,
+          deployment_authority_remains_armed: true,
+          result: $result
+        }'
+}
+
+deploy() {
+    local before after before_id after_id
+    [ ! -e "$CONSUMED_FILE" ] || fail "reviewed update ID is already consumed"
+    verify_git_authority
+    verify_local_images
+    run_predeployment_inspection
+
+    before="$(build_container_state)"
+    before_id="$(docker inspect "$TARGET_CONTAINER" --format '{{.Id}}')"
+
+    mark_consumed
+    compose_recreate "$CANDIDATE_REF"
+    verify_runtime_shape "$CANDIDATE_CONFIG_DIGEST" "$CANDIDATE_REF"
+    wait_for_health
+
+    after="$(build_container_state)"
+    verify_unrelated_unchanged "$before" "$after"
+    after_id="$(docker inspect "$TARGET_CONTAINER" --format '{{.Id}}')"
+    emit_result deploy deployed "$before_id" "$after_id"
+}
+
+rollback() {
+    local before after before_id after_id current_image current_config
+    require_secure_root_file "$CONSUMED_FILE"
+    verify_git_authority
+    verify_local_images
+
+    current_image="$(docker inspect "$TARGET_CONTAINER" --format '{{.Image}}' 2>/dev/null)" || fail "candidate container unavailable for rollback"
+    current_config="$(docker inspect "$TARGET_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null)" || fail "candidate configured image unavailable for rollback"
+    [ "$current_image" = "$CANDIDATE_CONFIG_DIGEST" ] || fail "rollback requires exact candidate image current"
+    [ "$current_config" = "$CANDIDATE_REF" ] || fail "rollback requires exact candidate configured image"
+    verify_runtime_shape "$CANDIDATE_CONFIG_DIGEST" "$CANDIDATE_REF"
+
+    before="$(build_container_state)"
+    before_id="$(docker inspect "$TARGET_CONTAINER" --format '{{.Id}}')"
+
+    compose_recreate "$ROLLBACK_REF"
+    verify_runtime_shape "$ROLLBACK_LOCAL_ID" "$ROLLBACK_REF"
+    wait_for_health
+
+    after="$(build_container_state)"
+    verify_unrelated_unchanged "$before" "$after"
+    after_id="$(docker inspect "$TARGET_CONTAINER" --format '{{.Id}}')"
+    emit_result rollback rolled-back "$before_id" "$after_id"
+}
+
+[ "$(id -u)" -eq 0 ] || fail "execution helper requires root"
+[ "$#" -eq 2 ] || fail "usage: homelab-stage6-execute ACTION SERVICE"
+
+ACTION="$1"
+SERVICE="$2"
+[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid service name"
+
+require_installed_context
+load_manifest
+require_armed
+
+case "$ACTION" in
+    deploy)
+        deploy
+        ;;
+    rollback)
+        rollback
+        ;;
+    *)
+        fail "action not permitted"
+        ;;
+esac

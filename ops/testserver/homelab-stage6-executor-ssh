@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+COMMAND="${SSH_ORIGINAL_COMMAND:-}"
+
+case "$COMMAND" in
+    ping)
+        printf 'pong\n'
+        ;;
+    "arm dashy")
+        exec sudo -n /usr/local/libexec/homelab-stage6-transition arm dashy
+        ;;
+    "deploy dashy")
+        exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy
+        ;;
+    "rollback dashy")
+        exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy
+        ;;
+    "disarm dashy")
+        exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy
+        ;;
+    *)
+        printf 'FAIL: command not permitted\n' >&2
+        exit 2
+        ;;
+esac
