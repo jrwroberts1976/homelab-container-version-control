@@ -1,0 +1,597 @@
+#!/bin/bash
+set -u
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+SERVICE="maintenance-page"
+STACK_DIR="/home/james/docker/stacks/maintenance-page"
+COMPOSE_FILE="${STACK_DIR}/docker-compose.yml"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage5-maintenance-page"
+POLICY_FILE="/etc/homelab-stage5/maintenance-page.policy.json"
+ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"
+STATE_DIR="/var/lib/homelab-stage5/maintenance-page"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+policy_string() {
+  local query="$1"
+
+  jq -er \
+    "$query | strings | select(length > 0)" \
+    "$POLICY_FILE" \
+    2>/dev/null ||
+    fail "policy value unavailable: $query"
+}
+
+policy_true() {
+  local query="$1"
+
+  jq -e \
+    "$query == true" \
+    "$POLICY_FILE" \
+    >/dev/null 2>&1 ||
+    fail "policy gate is not enabled: $query"
+}
+
+require_secure_root_file() {
+  local file="$1"
+
+  [ -f "$file" ] ||
+    fail "required root-owned file missing: $file"
+
+  [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+    fail "file is not root:root: $file"
+
+  if find "$file" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "file is group/other writable: $file"
+  fi
+}
+
+require_installed_context() {
+  local self
+
+  [ "$(id -u)" -eq 0 ] ||
+    fail "helper execution requires root"
+
+  self="$(readlink -f "$0")"
+
+  [ "$self" = "$INSTALLED_SELF" ] ||
+    fail "helper is not running from reviewed installed path"
+
+  require_secure_root_file "$INSTALLED_SELF"
+  require_secure_root_file "$POLICY_FILE"
+  require_secure_root_file "$ENABLE_FILE"
+
+  [ -d "$STATE_DIR" ] ||
+    fail "Stage 5 state directory is missing"
+
+  [ "$(stat -c '%U:%G' "$STATE_DIR")" = "root:root" ] ||
+    fail "Stage 5 state directory is not root:root"
+
+  if find "$STATE_DIR" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "Stage 5 state directory is group/other writable"
+  fi
+}
+
+require_policy_identity() {
+  local helper_sha expected_helper_sha implementation_commit pilot_id enable_value
+
+  [ "$(policy_string '.schema_version | tostring')" = "1" ] ||
+    fail "unsupported policy schema"
+
+  [ "$(policy_string '.mode')" = "execution-enabled" ] ||
+    fail "policy mode is not execution-enabled"
+
+  [ "$(policy_string '.service')" = "$SERVICE" ] ||
+    fail "policy service mismatch"
+
+  [ "$(policy_string '.host')" = "TestServer" ] ||
+    fail "policy host mismatch"
+
+  [ "$(policy_string '.compose_project')" = "$SERVICE" ] ||
+    fail "policy Compose project mismatch"
+
+  [ "$(policy_string '.compose_file')" = "$COMPOSE_FILE" ] ||
+    fail "policy Compose file mismatch"
+
+  pilot_id="$(policy_string '.pilot_id')"
+  enable_value="$(tr -d '\r\n' < "$ENABLE_FILE")"
+
+  [ "$enable_value" = "$pilot_id" ] ||
+    fail "enable file does not match policy pilot_id"
+
+  helper_sha="$(sha256sum "$INSTALLED_SELF" | awk '{print $1}')"
+  expected_helper_sha="$(policy_string '.implementation.helper_sha256')"
+
+  [ "$helper_sha" = "$expected_helper_sha" ] ||
+    fail "installed helper hash does not match policy"
+
+  implementation_commit="$(policy_string '.implementation.implementation_commit')"
+
+  [[ "$implementation_commit" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "implementation commit is not pinned"
+
+  policy_true '.deployment.allowed'
+}
+
+require_action_enabled() {
+  local action="$1"
+
+  case "$action" in
+    deploy)
+      policy_true '.deployment.deploy_command_enabled'
+      ;;
+    rollback)
+      policy_true '.deployment.rollback_command_enabled'
+      ;;
+    *)
+      fail "unsupported mutating action"
+      ;;
+  esac
+}
+
+policy_image() {
+  local key="$1"
+  local value
+
+  value="$(policy_string ".images.${key}")"
+
+  [[ "$value" =~ ^nginx@sha256:[0-9a-f]{64}$ ]] ||
+    fail "policy ${key} image is not an immutable nginx digest"
+
+  printf '%s\n' "$value"
+}
+
+verify_file_hash() {
+  local file="$1"
+  local expected="$2"
+  local actual
+
+  [ -f "$file" ] ||
+    fail "required configuration file missing: $file"
+
+  actual="$(sha256sum "$file" | awk '{print $1}')"
+
+  [ "$actual" = "$expected" ] ||
+    fail "configuration hash mismatch: $file"
+}
+
+rendered_image() {
+  local image_mode="$1"
+
+  if [ "$image_mode" = "default" ]; then
+    env -u MAINTENANCE_PAGE_IMAGE \
+      docker compose \
+        --project-directory "$STACK_DIR" \
+        -p "$SERVICE" \
+        -f "$COMPOSE_FILE" \
+        config |
+    awk '
+      /^  maintenance-page:/ {
+        active=1
+        next
+      }
+
+      active && /^    image:/ {
+        sub(/^    image: /, "")
+        print
+        exit
+      }
+    '
+  else
+    MAINTENANCE_PAGE_IMAGE="$image_mode" \
+      docker compose \
+        --project-directory "$STACK_DIR" \
+        -p "$SERVICE" \
+        -f "$COMPOSE_FILE" \
+        config |
+    awk '
+      /^  maintenance-page:/ {
+        active=1
+        next
+      }
+
+      active && /^    image:/ {
+        sub(/^    image: /, "")
+        print
+        exit
+      }
+    '
+  fi
+}
+
+current_digest() {
+  local image_id
+
+  image_id="$(docker inspect -f '{{.Image}}' "$SERVICE" 2>/dev/null)" ||
+    fail "maintenance-page container is unavailable"
+
+  docker image inspect "$image_id" \
+    --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+    2>/dev/null |
+  grep -E '^nginx@sha256:[0-9a-f]{64}$' |
+  head -1
+}
+
+verify_runtime_shape() {
+  local expected_network expected_host_ip expected_host_port expected_container_port
+  local networks
+
+  expected_network="$(policy_string '.runtime.expected_network')"
+  expected_host_ip="$(policy_string '.runtime.expected_host_ip')"
+  expected_host_port="$(policy_string '.runtime.expected_host_port | tostring')"
+  expected_container_port="$(policy_string '.runtime.expected_container_port | tostring')"
+
+  [ "$(docker inspect -f '{{.State.Running}}' "$SERVICE" 2>/dev/null)" = "true" ] ||
+    fail "maintenance-page is not running"
+
+  [ "$(docker inspect -f '{{.HostConfig.Privileged}}' "$SERVICE")" = "false" ] ||
+    fail "maintenance-page unexpectedly privileged"
+
+  networks="$(
+    docker inspect "$SERVICE" |
+    jq -r '.[0].NetworkSettings.Networks | keys[]' |
+    sort
+  )"
+
+  [ "$networks" = "$expected_network" ] ||
+    fail "maintenance-page network membership changed"
+
+  docker inspect "$SERVICE" |
+  jq -e \
+    --arg container_port "${expected_container_port}/tcp" \
+    --arg host_ip "$expected_host_ip" \
+    --arg host_port "$expected_host_port" \
+    '.[0].NetworkSettings.Ports[$container_port]
+      | length == 1
+      and .[0].HostIp == $host_ip
+      and .[0].HostPort == $host_port' \
+    >/dev/null ||
+    fail "maintenance-page published port changed"
+
+  docker inspect "$SERVICE" |
+  jq -e '
+    .[0].Mounts as $m
+    | ($m | length) == 2
+      and any(
+        $m[];
+        .Destination == "/usr/share/nginx/html"
+        and .RW == false
+      )
+      and any(
+        $m[];
+        .Destination == "/etc/nginx/conf.d/default.conf"
+        and .RW == false
+      )' \
+    >/dev/null ||
+    fail "maintenance-page mount boundary changed"
+}
+
+verify_configuration() {
+  local candidate rollback default_render rollback_render
+
+  verify_file_hash \
+    "$COMPOSE_FILE" \
+    "$(policy_string '.configuration.compose_sha256')"
+
+  verify_file_hash \
+    "$STACK_DIR/nginx/default.conf" \
+    "$(policy_string '.configuration.nginx_config_sha256')"
+
+  verify_file_hash \
+    "$STACK_DIR/html/index.html" \
+    "$(policy_string '.configuration.index_html_sha256')"
+
+  candidate="$(policy_image candidate)"
+  rollback="$(policy_image rollback)"
+
+  [ "$candidate" != "$rollback" ] ||
+    fail "candidate and rollback identities are identical"
+
+  default_render="$(rendered_image default)"
+  rollback_render="$(rendered_image "$rollback")"
+
+  [ "$default_render" = "$candidate" ] ||
+    fail "Compose default does not resolve to policy candidate"
+
+  [ "$rollback_render" = "$rollback" ] ||
+    fail "Compose rollback override does not resolve exactly"
+}
+
+verify_image_local_arm64() {
+  local image="$1"
+  local platform
+
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    fail "required immutable image is not local: $image"
+
+  platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
+
+  [ "$platform" = "linux/arm64" ] ||
+    fail "image platform is not linux/arm64: $image"
+}
+
+verify_health() {
+  local url marker tmp code
+
+  url="$(policy_string '.runtime.health_url')"
+  marker="$(policy_string '.runtime.health_marker')"
+  tmp="$(mktemp)"
+
+  code="$(
+    curl \
+      -sS \
+      -o "$tmp" \
+      -w '%{http_code}' \
+      "$url" \
+      2>/dev/null || true
+  )"
+
+  [ "$code" = "200" ] || {
+    rm -f "$tmp"
+    fail "health endpoint did not return HTTP 200"
+  }
+
+  grep -Fq "$marker" "$tmp" || {
+    rm -f "$tmp"
+    fail "health marker missing"
+  }
+
+  rm -f "$tmp"
+}
+
+capture_protected_state() {
+  JENKINS_ID_BEFORE="$(docker inspect -f '{{.Id}}' jenkins)" ||
+    fail "Jenkins baseline unavailable"
+  JENKINS_RESTART_BEFORE="$(docker inspect -f '{{.RestartCount}}' jenkins)" ||
+    fail "Jenkins restart baseline unavailable"
+  DIND_ID_BEFORE="$(docker inspect -f '{{.Id}}' jenkins-docker)" ||
+    fail "Jenkins DinD baseline unavailable"
+  DIND_RESTART_BEFORE="$(docker inspect -f '{{.RestartCount}}' jenkins-docker)" ||
+    fail "Jenkins DinD restart baseline unavailable"
+
+  OTHER_CONTAINERS_BEFORE="$(
+    docker ps -a --format '{{.Names}}={{.ID}}' |
+    grep -v '^maintenance-page=' |
+    sort
+  )"
+}
+
+verify_protected_state_unchanged() {
+  local others_after
+
+  [ "$(docker inspect -f '{{.Id}}' jenkins)" = "$JENKINS_ID_BEFORE" ] ||
+    fail "Jenkins container changed"
+
+  [ "$(docker inspect -f '{{.RestartCount}}' jenkins)" = "$JENKINS_RESTART_BEFORE" ] ||
+    fail "Jenkins restart count changed"
+
+  [ "$(docker inspect -f '{{.Id}}' jenkins-docker)" = "$DIND_ID_BEFORE" ] ||
+    fail "Jenkins DinD container changed"
+
+  [ "$(docker inspect -f '{{.RestartCount}}' jenkins-docker)" = "$DIND_RESTART_BEFORE" ] ||
+    fail "Jenkins DinD restart count changed"
+
+  others_after="$(
+    docker ps -a --format '{{.Names}}={{.ID}}' |
+    grep -v '^maintenance-page=' |
+    sort
+  )"
+
+  [ "$others_after" = "$OTHER_CONTAINERS_BEFORE" ] ||
+    fail "an unrelated container identity changed"
+}
+
+verify_preconditions() {
+  require_installed_context
+  require_policy_identity
+  verify_configuration
+  verify_runtime_shape
+}
+
+emit_review_status() {
+  jq -n \
+    --arg service "$SERVICE" \
+    --arg installed_self "$INSTALLED_SELF" \
+    --arg policy_file "$POLICY_FILE" \
+    --arg enable_file "$ENABLE_FILE" \
+    '{
+      schema_version: 1,
+      mode: "helper-source-review",
+      service: $service,
+      installed_self: $installed_self,
+      policy_file: $policy_file,
+      enable_file: $enable_file,
+      mutation_requires: [
+        "root",
+        "exact installed helper path",
+        "root-owned non-writable helper",
+        "root-owned execution-enabled policy",
+        "root-owned matching enable file",
+        "policy-pinned helper sha256",
+        "policy action gate"
+      ],
+      deployment: {
+        authority_installed: false,
+        performed: false
+      }
+    }'
+}
+
+perform_deploy() {
+  local candidate rollback current pilot_id consumed old_id
+
+  verify_preconditions
+  require_action_enabled deploy
+
+  candidate="$(policy_image candidate)"
+  rollback="$(policy_image rollback)"
+  current="$(current_digest)"
+  pilot_id="$(policy_string '.pilot_id')"
+  consumed="${STATE_DIR}/${pilot_id}.consumed"
+
+  [ ! -e "$consumed" ] ||
+    fail "pilot_id has already been consumed"
+
+  [ "$current" = "$rollback" ] ||
+    fail "current runtime digest is not the rollback baseline"
+
+  verify_image_local_arm64 "$candidate"
+  verify_image_local_arm64 "$rollback"
+  verify_health
+
+  old_id="$(docker inspect -f '{{.Id}}' "$SERVICE")"
+  capture_protected_state
+
+  umask 077
+  printf 'pilot_id=%s\naction=deploy\nstarted=%s\n' \
+    "$pilot_id" \
+    "$(date --iso-8601=seconds)" \
+    > "${consumed}.tmp"
+
+  mv "${consumed}.tmp" "$consumed"
+
+  if ! MAINTENANCE_PAGE_IMAGE="$candidate" \
+       docker compose \
+         --project-directory "$STACK_DIR" \
+         -p "$SERVICE" \
+         -f "$COMPOSE_FILE" \
+         up \
+         -d \
+         --no-deps \
+         --no-build \
+         --pull never \
+         --force-recreate \
+         "$SERVICE"
+  then
+    printf 'ERROR: deployment command failed after pilot consumption\n' >&2
+    exit 3
+  fi
+
+  [ "$(docker inspect -f '{{.Id}}' "$SERVICE")" != "$old_id" ] ||
+    fail "maintenance-page was not recreated"
+
+  [ "$(current_digest)" = "$candidate" ] ||
+    fail "post-deployment digest does not match candidate"
+
+  verify_runtime_shape
+  verify_health
+  verify_protected_state_unchanged
+
+  jq -n \
+    --arg service "$SERVICE" \
+    --arg candidate "$candidate" \
+    --arg rollback "$rollback" \
+    --arg pilot_id "$pilot_id" \
+    '{
+      schema_version: 1,
+      mode: "stage5-pilot",
+      action: "deploy",
+      pilot_id: $pilot_id,
+      service: $service,
+      candidate: $candidate,
+      rollback: $rollback,
+      deployment: {
+        allowed: true,
+        performed: true
+      },
+      result: "success"
+    }'
+}
+
+perform_rollback() {
+  local candidate rollback current pilot_id consumed old_id
+
+  verify_preconditions
+  require_action_enabled rollback
+
+  candidate="$(policy_image candidate)"
+  rollback="$(policy_image rollback)"
+  current="$(current_digest)"
+  pilot_id="$(policy_string '.pilot_id')"
+  consumed="${STATE_DIR}/${pilot_id}.consumed"
+
+  [ -f "$consumed" ] ||
+    fail "pilot_id has not been consumed"
+
+  [ "$current" = "$candidate" ] ||
+    fail "rollback requires the candidate digest to be current"
+
+  verify_image_local_arm64 "$rollback"
+
+  old_id="$(docker inspect -f '{{.Id}}' "$SERVICE")"
+  capture_protected_state
+
+  if ! MAINTENANCE_PAGE_IMAGE="$rollback" \
+       docker compose \
+         --project-directory "$STACK_DIR" \
+         -p "$SERVICE" \
+         -f "$COMPOSE_FILE" \
+         up \
+         -d \
+         --no-deps \
+         --no-build \
+         --pull never \
+         --force-recreate \
+         "$SERVICE"
+  then
+    printf 'ERROR: rollback command failed\n' >&2
+    exit 3
+  fi
+
+  [ "$(docker inspect -f '{{.Id}}' "$SERVICE")" != "$old_id" ] ||
+    fail "maintenance-page was not recreated during rollback"
+
+  [ "$(current_digest)" = "$rollback" ] ||
+    fail "post-rollback digest does not match rollback identity"
+
+  verify_runtime_shape
+  verify_health
+  verify_protected_state_unchanged
+
+  jq -n \
+    --arg service "$SERVICE" \
+    --arg candidate "$candidate" \
+    --arg rollback "$rollback" \
+    --arg pilot_id "$pilot_id" \
+    '{
+      schema_version: 1,
+      mode: "stage5-pilot",
+      action: "rollback",
+      pilot_id: $pilot_id,
+      service: $service,
+      candidate: $candidate,
+      rollback: $rollback,
+      deployment: {
+        allowed: true,
+        performed: true
+      },
+      rollback_performed: true,
+      result: "success"
+    }'
+}
+
+ACTION="${1:-}"
+
+case "$ACTION" in
+  review-status)
+    emit_review_status
+    ;;
+  deploy)
+    perform_deploy
+    ;;
+  rollback)
+    perform_rollback
+    ;;
+  *)
+    fail "action not permitted"
+    ;;
+esac
