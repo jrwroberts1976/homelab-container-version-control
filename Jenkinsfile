@@ -16,7 +16,7 @@ pipeline {
   }
 
   environment {
-    STAGE4_HOST = '172.18.0.1'
+    STAGE4_HOST = '172.30.255.249'
     STAGE4_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
     STAGE4_SCHEMA_BLOB = '7420557838813710378b468034db33f1fc9c0b25'
     STAGE4_WRAPPER_SHA256 = '091626e74ae811ff3a76b236ff57056b34efd38d421cc76bfe566097c9b967c7'
