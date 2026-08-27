@@ -201,12 +201,19 @@ def validate_execute(path: Path) -> None:
         "deploy",
     )
 
-    rollback_text = text[text.find("rollback() {") : text.find('[ "$(id -u)"')]
+    rollback_start = text.find("rollback() {")
+    require(rollback_start >= 0, "rollback function missing")
+    rollback_end = text.find('[ "$(id -u)"', rollback_start)
+    require(rollback_end > rollback_start, "rollback function end marker missing")
+    rollback_text = text[rollback_start:rollback_end]
     require_order(
         rollback_text,
         [
             'require_secure_root_file "$CONSUMED_FILE"',
+            "verify_git_authority",
+            "verify_local_images",
             '[ "$current_image" = "$CANDIDATE_CONFIG_DIGEST" ]',
+            'verify_runtime_shape "$CANDIDATE_CONFIG_DIGEST" "$CANDIDATE_REF"',
             'before="$(build_container_state)"',
             'compose_recreate "$ROLLBACK_REF"',
             'verify_runtime_shape "$ROLLBACK_LOCAL_ID" "$ROLLBACK_REF"',
