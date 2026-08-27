@@ -29,6 +29,15 @@ def normalize(path: Path) -> tuple[str, str]:
     return text, normalized
 
 
+def require_order(text: str, needles: list[str], label: str) -> None:
+    positions = []
+    for needle in needles:
+        position = text.find(needle)
+        require(position >= 0, f"{label} ordering token missing: {needle}")
+        positions.append(position)
+    require(positions == sorted(positions), f"{label} ordering is incorrect")
+
+
 def validate_transition(path: Path) -> None:
     text, normalized = normalize(path)
 
@@ -86,6 +95,18 @@ def validate_transition(path: Path) -> None:
     require('case "$ACTION" in' in text, "transition action case missing")
     require("arm)" in text and "disarm)" in text, "transition must expose only arm/disarm cases")
     require('SERVICE="$3"' not in text and '${3' not in text, "transition must not accept a third argument")
+    require('rm -f "$CONSUMED_FILE"' not in text, "transition must never delete consumed evidence")
+
+    arm_text = text[text.find("arm() {") : text.find("disarm() {")]
+    require_order(
+        arm_text,
+        [
+            '[ ! -e "$CONSUMED_FILE" ]',
+            "run_preapproval_inspection",
+            'mv -f "$tmp" "$ENABLE_FILE"',
+        ],
+        "arm",
+    )
 
 
 def validate_execute(path: Path) -> None:
@@ -162,6 +183,39 @@ def validate_execute(path: Path) -> None:
     require('SERVICE="$3"' not in text and '${3' not in text, "execution helper must not accept a third argument")
     require('case "$ACTION" in' in text, "execution action case missing")
     require("deploy)" in text and "rollback)" in text, "execution helper must expose deploy/rollback cases")
+    require('rm -f "$CONSUMED_FILE"' not in text, "execution helper must never delete consumed evidence")
+
+    deploy_text = text[text.find("deploy() {") : text.find("rollback() {")]
+    require_order(
+        deploy_text,
+        [
+            "run_predeployment_inspection",
+            'before="$(build_container_state)"',
+            "mark_consumed",
+            'compose_recreate "$CANDIDATE_REF"',
+            'verify_runtime_shape "$CANDIDATE_CONFIG_DIGEST" "$CANDIDATE_REF"',
+            "wait_for_health",
+            'after="$(build_container_state)"',
+            'verify_unrelated_unchanged "$before" "$after"',
+        ],
+        "deploy",
+    )
+
+    rollback_text = text[text.find("rollback() {") : text.find('[ "$(id -u)"')]
+    require_order(
+        rollback_text,
+        [
+            'require_secure_root_file "$CONSUMED_FILE"',
+            '[ "$current_image" = "$CANDIDATE_CONFIG_DIGEST" ]',
+            'before="$(build_container_state)"',
+            'compose_recreate "$ROLLBACK_REF"',
+            'verify_runtime_shape "$ROLLBACK_LOCAL_ID" "$ROLLBACK_REF"',
+            "wait_for_health",
+            'after="$(build_container_state)"',
+            'verify_unrelated_unchanged "$before" "$after"',
+        ],
+        "rollback",
+    )
 
 
 def validate_wrapper(path: Path) -> None:
