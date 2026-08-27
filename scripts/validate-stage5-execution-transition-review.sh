@@ -62,10 +62,17 @@ jq -e '
   fail "execution policy semantics mismatch"
 
 PLACEHOLDERS="$(grep -o 'REPLACE_AFTER_REVIEW' "$POLICY" | wc -l | tr -d ' ')"
-[ "$PLACEHOLDERS" -eq 6 ] ||
-  fail "execution policy does not contain exactly six review placeholders"
+[ "$PLACEHOLDERS" -eq 4 ] ||
+  fail "execution policy does not contain exactly four review placeholders"
 
-echo "Execution policy semantics + review placeholders: PASS"
+if jq -e '
+  .implementation
+  | has("transition_sha256") or has("executor_wrapper_sha256")
+' "$POLICY" >/dev/null; then
+  fail "execution policy contains circular transition/executor hash fields"
+fi
+
+echo "Execution policy semantics + non-circular review placeholders: PASS"
 echo
 
 echo "===== EXECUTOR WRAPPER ALLOW-LIST ====="
@@ -107,7 +114,7 @@ grep -Fq 'inspection is not available through the Stage 5 executor identity' "$E
 echo "Executor wrapper literal allow-list / no arbitrary forwarding: PASS"
 echo
 
-echo "===== TRANSITION HELPER MUTATION BOUNDARY ====="
+echo "===== TRANSITION HELPER INTEGRITY + MUTATION BOUNDARY ====="
 
 for expected in \
   'INSTALLED_SELF="/usr/local/libexec/homelab-stage5-maintenance-page-transition"' \
@@ -115,12 +122,18 @@ for expected in \
   'EXECUTION_POLICY="/etc/homelab-stage5/maintenance-page.execution-policy.json"' \
   'ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"' \
   'STATE_DIR="/var/lib/homelab-stage5/maintenance-page"' \
-  'EXPECTED_INSPECTION_POLICY_SHA256="REPLACE_AFTER_REVIEW"' \
-  'EXPECTED_EXECUTION_POLICY_SHA256="REPLACE_AFTER_REVIEW"'
+  'EXPECTED_INSPECTION_POLICY_SHA256="adcac66121b04d4b0b4f0a9962c5e75e5c9b3a801a5b28f222f04a6670973f6f"' \
+  'EXPECTED_AUTHORITY_GATE_SHA256="561499a0e327f02e4df7fdabf40ab1d0660dc5ed51622061c568f9deaaa4dbda"' \
+  'EXPECTED_DEPLOY_HELPER_SHA256="a0df7b46aa01ffc9ef3fbf43cea43caeef34681ef22b759ae822ed2832cfc42a"' \
+  'EXPECTED_INSPECTOR_SHA256="64dc6526e66a9e6878ca23c1703a9d7bb11c82b7f60cf7b8aae714b2ed9cb213"'
 do
   grep -Fq "$expected" "$TRANSITION" ||
-    fail "transition source missing required gate: $expected"
+    fail "transition source missing required exact gate: $expected"
 done
+
+if grep -Fq 'EXPECTED_EXECUTION_POLICY_SHA256=' "$TRANSITION"; then
+  fail "transition helper reintroduced circular execution-policy hash pin"
+fi
 
 if grep -En \
   'docker (pull|run|rm|restart|exec|tag|push|build)|docker compose (up|down|pull|push|build|restart|rm)|git (commit|push|reset|checkout|switch|merge|rebase)|systemctl (start|stop|restart|reload)|apt(-get)? |curl .*(-X|--request)' \
@@ -147,8 +160,12 @@ grep -Fq 'trap cleanup_arm EXIT' "$TRANSITION" ||
 grep -Fq 'install -o root -g root -m 0600 "$backup" "$ACTIVE_POLICY"' "$TRANSITION" ||
   fail "arm transition lacks inspection-policy restore path"
 
-echo "Transition helper limited to policy/activation state changes: PASS"
-echo "Arm partial-failure restore path present: PASS"
+grep -Fq 'active policy does not exactly match staged execution policy' "$TRANSITION" ||
+  fail "arm transition does not verify byte-exact staged policy copy"
+
+echo "Transition helper exact component pins: PASS"
+echo "Transition helper has no container mutation primitive: PASS"
+echo "Arm partial-failure restore path: PASS"
 echo
 
 echo "===== SOURCE CHECKOUT CANNOT ARM ====="
@@ -176,9 +193,9 @@ printf 'execution_policy_template_sha256=%s\n' "$(sha256sum "$POLICY" | awk '{pr
 echo
 echo "===== RESULT ====="
 echo "PASS: source-only transition design preserves existing inspection boundary"
-echo "PASS: execution policy still contains review placeholders"
+echo "PASS: execution policy remains a review template, not an installable final policy"
 echo "PASS: executor wrapper exposes only literal Stage 5 actions"
-echo "PASS: transition helper contains no container mutation primitive"
+echo "PASS: transition helper changes only activation/policy state"
 echo "PASS: source checkout cannot arm execution"
 echo "NO HOST INSTALLATION PERFORMED"
 echo "NO SUDO AUTHORITY CHANGED"
