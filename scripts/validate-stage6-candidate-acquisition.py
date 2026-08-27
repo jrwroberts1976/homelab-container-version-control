@@ -21,6 +21,15 @@ def main() -> int:
     args = parser.parse_args()
 
     text = args.helper.read_text(encoding="utf-8")
+    code_lines = []
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        code_lines.append(line)
+
+    code_text = "\n".join(code_lines)
 
     required = [
         'MANIFEST_DIR="/etc/homelab-stage6/services"',
@@ -59,17 +68,14 @@ def main() -> int:
     ]
 
     for needle in banned_literal:
-        require(needle not in text, f"banned operation present: {needle}")
+        require(needle not in code_text, f"banned executable operation present: {needle}")
 
     # The only permitted mutating Docker command in the helper is one exact
     # manifest-derived pull. Inspect/ps/image inspect are read-only.
-    docker_lines = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if re.search(r"(^|\s)docker\s+", line):
-            docker_lines.append(line)
+    docker_lines = [
+        line for line in code_lines
+        if re.search(r"(^|\s)docker\s+", line)
+    ]
 
     pulls = [line for line in docker_lines if "docker pull" in line]
     require(len(pulls) == 1, f"expected exactly one docker pull, found {len(pulls)}")
@@ -84,11 +90,10 @@ def main() -> int:
         )
         require(allowed, f"unexpected Docker command surface: {line}")
 
-    # Reject extra positional-argument expansion into Docker or filesystem
-    # paths. SERVICE is the only caller input and may select only a fixed
-    # root-owned manifest basename.
-    require("$2" not in text and "${2" not in text, "second positional argument not allowed")
-    require("$3" not in text and "${3" not in text, "third positional argument not allowed")
+    # Reject extra positional-argument expansion. SERVICE is the only caller
+    # input and may select only a fixed root-owned manifest basename.
+    require("$2" not in code_text and "${2" not in code_text, "second positional argument not allowed")
+    require("$3" not in code_text and "${3" not in code_text, "third positional argument not allowed")
 
     print("PASS: Stage 6 candidate acquisition source guard")
     return 0
