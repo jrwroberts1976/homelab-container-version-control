@@ -9,6 +9,13 @@ EXECUTOR="ops/testserver/homelab-stage5-executor-ssh"
 POLICY="config/stage5-maintenance-page-execution-enabled.template.json"
 DESIGN="docs/stage5-human-approved-execution-transition.md"
 
+REVIEW_COMMIT="7918c6c4ed01c32333c781e6d9de3eeaa19e4773"
+EXPECTED_TRANSITION_SHA256="73eb78453b87e86760cb9fafd556e11c2a5c43c8df2b2d3e87fa0429902d64d1"
+EXPECTED_EXECUTOR_SHA256="2feea261deaccb92dccc1f9c982ed9f4360c6320ad84dba2d7b39e476582dc49"
+EXPECTED_GATE_SHA256="561499a0e327f02e4df7fdabf40ab1d0660dc5ed51622061c568f9deaaa4dbda"
+EXPECTED_HELPER_SHA256="a0df7b46aa01ffc9ef3fbf43cea43caeef34681ef22b759ae822ed2832cfc42a"
+EXPECTED_INSPECTOR_SHA256="64dc6526e66a9e6878ca23c1703a9d7bb11c82b7f60cf7b8aae714b2ed9cb213"
+
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 2
@@ -21,9 +28,37 @@ done
 git rev-parse --verify origin/main >/dev/null 2>&1 ||
   fail "origin/main is unavailable; fetch before review"
 
-echo "===== STAGE 5 EXECUTION-TRANSITION SOURCE REVIEW ====="
+git cat-file -e "${REVIEW_COMMIT}^{commit}" 2>/dev/null ||
+  fail "reviewed implementation commit is unavailable"
+
+git merge-base --is-ancestor "$REVIEW_COMMIT" HEAD ||
+  fail "reviewed implementation commit is not an ancestor of HEAD"
+
+echo "===== STAGE 5 EXECUTION-TRANSITION PINNED SOURCE REVIEW ====="
 echo "head=$(git rev-parse HEAD)"
 echo "origin_main=$(git rev-parse origin/main)"
+echo "review_commit=$REVIEW_COMMIT"
+echo
+
+echo "===== REVIEWED IMPLEMENTATION SOURCE FROZEN ====="
+
+git diff --exit-code "$REVIEW_COMMIT"..HEAD -- \
+  "$TRANSITION" \
+  "$EXECUTOR" \
+  "$DESIGN" \
+  >/dev/null ||
+  fail "reviewed transition/executor/design source changed after review"
+
+TRANSITION_SHA="$(sha256sum "$TRANSITION" | awk '{print $1}')"
+EXECUTOR_SHA="$(sha256sum "$EXECUTOR" | awk '{print $1}')"
+
+[ "$TRANSITION_SHA" = "$EXPECTED_TRANSITION_SHA256" ] ||
+  fail "transition helper hash changed after review"
+
+[ "$EXECUTOR_SHA" = "$EXPECTED_EXECUTOR_SHA256" ] ||
+  fail "executor wrapper hash changed after review"
+
+echo "Reviewed transition/executor source unchanged: PASS"
 echo
 
 echo "===== EXISTING PROVEN BOUNDARY UNCHANGED ====="
@@ -42,28 +77,44 @@ git diff --exit-code origin/main...HEAD -- \
 echo "Existing Stage 4 + inspection source unchanged: PASS"
 echo
 
-echo "===== EXECUTION POLICY TEMPLATE ====="
+echo "===== PINNED EXECUTION POLICY ====="
 
-jq -e '
+jq -e \
+  --arg review_commit "$REVIEW_COMMIT" \
+  --arg gate "$EXPECTED_GATE_SHA256" \
+  --arg helper "$EXPECTED_HELPER_SHA256" \
+  --arg inspector "$EXPECTED_INSPECTOR_SHA256" '
   .schema_version == 1
   and .mode == "execution-enabled"
   and .pilot_id == "stage5-maintenance-page-nginx-1.31.4-20260827"
   and .service == "maintenance-page"
   and .host == "TestServer"
+  and .compose_project == "maintenance-page"
+  and .compose_file == "/home/james/docker/stacks/maintenance-page/docker-compose.yml"
   and .docker_env_authority_commit == "f0430e1d9ee91ba4dfba7db34d0e9f0e201a8883"
+  and .docker_env_authority_checkout == "/var/lib/homelab-stage5/authority/docker-env"
+  and .configuration.compose_sha256 == "26fb63ff74360932f0dbf9eb27876c67bb3212767aaa6a11ea6c3370750eeadf"
+  and .configuration.nginx_config_sha256 == "5f776d04e520489a0958d2f267dcf034448a3c385b88f142ae7aa67d53a34d13"
+  and .configuration.index_html_sha256 == "9497b740f24af80568843efdf500544a25b47f4dd3fe248161c31c4cd202eb29"
   and .images.rollback == "nginx@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752"
   and .images.candidate == "nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913"
+  and .images.candidate_arm64_manifest == "sha256:57744b8fa99abc438b1fbde6bd69e4270d0984ccfdee60c661ec22243047373a"
+  and .implementation.authority_gate_sha256 == $gate
+  and .implementation.helper_sha256 == $helper
+  and .implementation.inspector_sha256 == $inspector
+  and .implementation.implementation_commit == $review_commit
   and .inspection.allowed == true
+  and .inspection.performed == false
   and .deployment.allowed == true
   and .deployment.performed == false
   and .deployment.deploy_command_enabled == true
   and .deployment.rollback_command_enabled == true
 ' "$POLICY" >/dev/null ||
-  fail "execution policy semantics mismatch"
+  fail "pinned execution policy semantics mismatch"
 
-PLACEHOLDERS="$(grep -o 'REPLACE_AFTER_REVIEW' "$POLICY" | wc -l | tr -d ' ')"
-[ "$PLACEHOLDERS" -eq 4 ] ||
-  fail "execution policy does not contain exactly four review placeholders"
+if grep -Fq 'REPLACE_AFTER_REVIEW' "$POLICY"; then
+  fail "execution policy still contains a review placeholder"
+fi
 
 if jq -e '
   .implementation
@@ -72,7 +123,7 @@ if jq -e '
   fail "execution policy contains circular transition/executor hash fields"
 fi
 
-echo "Execution policy semantics + non-circular review placeholders: PASS"
+echo "Pinned execution policy exact + non-circular: PASS"
 echo
 
 echo "===== EXECUTOR WRAPPER ALLOW-LIST ====="
@@ -184,16 +235,23 @@ echo "source_arm_rc=$SOURCE_RC"
 echo "Source-checkout arm rejected: PASS"
 echo
 
-echo "===== REVIEW HASHES ====="
+echo "===== FINAL SOURCE LOCK ====="
 
-printf 'transition_sha256=%s\n' "$(sha256sum "$TRANSITION" | awk '{print $1}')"
-printf 'executor_wrapper_sha256=%s\n' "$(sha256sum "$EXECUTOR" | awk '{print $1}')"
-printf 'execution_policy_template_sha256=%s\n' "$(sha256sum "$POLICY" | awk '{print $1}')"
+POLICY_SHA="$(sha256sum "$POLICY" | awk '{print $1}')"
+
+printf 'review_commit=%s\n' "$REVIEW_COMMIT"
+printf 'transition_sha256=%s\n' "$TRANSITION_SHA"
+printf 'executor_wrapper_sha256=%s\n' "$EXECUTOR_SHA"
+printf 'execution_policy_sha256=%s\n' "$POLICY_SHA"
+printf 'authority_gate_sha256=%s\n' "$EXPECTED_GATE_SHA256"
+printf 'helper_sha256=%s\n' "$EXPECTED_HELPER_SHA256"
+printf 'inspector_sha256=%s\n' "$EXPECTED_INSPECTOR_SHA256"
 
 echo
 echo "===== RESULT ====="
-echo "PASS: source-only transition design preserves existing inspection boundary"
-echo "PASS: execution policy remains a review template, not an installable final policy"
+echo "PASS: reviewed implementation source is frozen"
+echo "PASS: final execution policy is fully pinned"
+echo "PASS: existing Stage 4 and Stage 5 inspection source unchanged"
 echo "PASS: executor wrapper exposes only literal Stage 5 actions"
 echo "PASS: transition helper changes only activation/policy state"
 echo "PASS: source checkout cannot arm execution"
