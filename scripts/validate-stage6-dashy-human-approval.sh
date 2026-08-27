@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PIPELINE="${1:-Jenkinsfile.stage6-dashy-human-approval}"
+NORMALIZER="${2:-scripts/stage6-normalize-executor-key.sh}"
 
 fail() {
     printf 'FAIL: %s\n' "$1" >&2
@@ -9,6 +10,7 @@ fail() {
 }
 
 [ -f "$PIPELINE" ] || fail "pipeline not found: $PIPELINE"
+[ -f "$NORMALIZER" ] || fail "normalizer not found: $NORMALIZER"
 
 count_fixed() {
     local pattern="$1"
@@ -104,6 +106,147 @@ fi
 
 echo "Credential ordering: PASS"
 
+printf '\n===== EXECUTOR KEY CANONICALIZATION =====\n'
+
+require_count 1 \
+    "STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'" \
+    executor_fingerprint_pin_count
+
+NORMALIZER_PIN="$(
+    sed -n \
+        "s/.*STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = '\([0-9a-f]\{64\}\)'.*/\1/p" \
+        "$PIPELINE"
+)"
+
+ACTUAL_NORMALIZER_SHA="$(
+    sha256sum "$NORMALIZER" |
+    awk '{print $1}'
+)"
+
+echo "normalizer_pinned_sha256=$NORMALIZER_PIN"
+echo "normalizer_actual_sha256=$ACTUAL_NORMALIZER_SHA"
+
+[ -n "$NORMALIZER_PIN" ] ||
+    fail "normalizer SHA pin missing"
+
+[ "$NORMALIZER_PIN" = "$ACTUAL_NORMALIZER_SHA" ] ||
+    fail "normalizer SHA pin mismatch"
+
+NORMALIZER_CALL_COUNT="$(
+    grep -Ec \
+        '^[[:space:]]+scripts/stage6-normalize-executor-key\.sh \\$' \
+        "$PIPELINE" ||
+    true
+)"
+
+NORMALIZED_IDENTITY_COUNT="$(
+    grep -Fc -- \
+        '-i "$NORMALIZED_EXECUTOR_KEY"' \
+        "$PIPELINE" ||
+    true
+)"
+
+echo "normalizer_call_count=$NORMALIZER_CALL_COUNT"
+echo "normalized_executor_identity_count=$NORMALIZED_IDENTITY_COUNT"
+
+[ "$NORMALIZER_CALL_COUNT" -eq 5 ] ||
+    fail "expected five executor key normalizer calls"
+
+[ "$NORMALIZED_IDENTITY_COUNT" -eq 5 ] ||
+    fail "expected five normalized SSH identity uses"
+
+for raw_key in \
+    STAGE6_EXECUTOR_PING_KEY \
+    STAGE6_ARM_KEY \
+    STAGE6_DEPLOY_KEY \
+    STAGE6_ROLLBACK_KEY \
+    STAGE6_DISARM_KEY
+do
+    raw_count="$(
+        grep -Fc -- "-i \"\$$raw_key\"" "$PIPELINE" ||
+        true
+    )"
+
+    echo "raw_identity_${raw_key}=$raw_count"
+
+    [ "$raw_count" -eq 0 ] ||
+        fail "raw Jenkins-bound executor key passed to SSH: $raw_key"
+done
+
+FIRST_NORMALIZER_LINE="$(
+    first_line 'scripts/stage6-normalize-executor-key.sh \'
+)"
+
+[ -n "$FIRST_NORMALIZER_LINE" ] ||
+    fail "normalizer invocation missing"
+
+[ "$FIRST_NORMALIZER_LINE" -gt "$DRIFT_LINE" ] ||
+    fail "executor key normalization visible before zero-drift gate"
+
+bash -n "$NORMALIZER"
+
+TMP_NORMALIZER_TEST="$(
+    mktemp -d /var/tmp/stage6-key-normalizer-test.XXXXXX
+)"
+
+trap 'rm -rf "$TMP_NORMALIZER_TEST"' EXIT HUP INT TERM
+
+ssh-keygen \
+    -q \
+    -t ed25519 \
+    -N '' \
+    -f "$TMP_NORMALIZER_TEST/key"
+
+TEST_FP="$(
+    ssh-keygen \
+        -lf "$TMP_NORMALIZER_TEST/key" \
+        -E sha256 |
+    awk '{print $2}'
+)"
+
+"$NORMALIZER" \
+    "$TMP_NORMALIZER_TEST/key" \
+    "$TMP_NORMALIZER_TEST/out-clean" \
+    "$TEST_FP" \
+    > "$TMP_NORMALIZER_TEST/meta-clean"
+
+grep -Fx \
+    'credential_normalization=none' \
+    "$TMP_NORMALIZER_TEST/meta-clean" \
+    >/dev/null
+
+{
+    printf '\n'
+    cat "$TMP_NORMALIZER_TEST/key"
+} > "$TMP_NORMALIZER_TEST/key-one-blank"
+
+"$NORMALIZER" \
+    "$TMP_NORMALIZER_TEST/key-one-blank" \
+    "$TMP_NORMALIZER_TEST/out-one-blank" \
+    "$TEST_FP" \
+    > "$TMP_NORMALIZER_TEST/meta-one-blank"
+
+grep -Fx \
+    'credential_normalization=removed-one-leading-blank-line' \
+    "$TMP_NORMALIZER_TEST/meta-one-blank" \
+    >/dev/null
+
+{
+    printf '\n\n'
+    cat "$TMP_NORMALIZER_TEST/key"
+} > "$TMP_NORMALIZER_TEST/key-two-blanks"
+
+if "$NORMALIZER" \
+    "$TMP_NORMALIZER_TEST/key-two-blanks" \
+    "$TMP_NORMALIZER_TEST/out-two-blanks" \
+    "$TEST_FP" \
+    >/dev/null 2>&1
+then
+    fail "normalizer accepted more than one leading blank line"
+fi
+
+echo "Executor key canonicalization: PASS"
+
 printf '\n===== REMOTE COMMAND SURFACE =====\n'
 
 require_count 2 '"inspect dashy"' remote_inspect_count
@@ -190,6 +333,11 @@ require_present "a.deployment?.allowed != false" "deployment false precondition"
 require_present "if (before != after)" "zero-drift comparison"
 require_present "returnStatus: true" "controlled deploy/rollback status"
 require_present "reviewed rollback path will be attempted" "rollback branch"
+require_present "rc == 96 || rc == 97" "pre-SSH executor failure classification"
+require_present "deploy was not attempted because the local executor" "deploy-not-attempted failure message"
+require_present "Rollback must not be attempted" "pre-SSH rollback prohibition"
+require_present "env.STAGE6_DEPLOY_RC != '96'" "rollback excludes normalization failure"
+require_present "env.STAGE6_DEPLOY_RC != '97'" "rollback excludes executor identity failure"
 require_present "Execution remains armed/consumed for controlled manual recovery" "failed rollback terminal warning"
 require_present "a.consumed != true" "consumed artifact assertion"
 require_present "a.deployment_authority_remains_armed != true" "armed-after-execution assertion"

@@ -11,6 +11,8 @@ pipeline {
     STAGE6_HOST = '172.30.255.249'
     STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
     STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+    STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
+    STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
 
     STAGE6_SERVICE = 'dashy'
     STAGE6_UPDATE_ID = 'stage6-dashy-40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59'
@@ -48,9 +50,15 @@ pipeline {
           test -f ops/testserver/homelab-stage6-transition
           test -f ops/testserver/homelab-stage6-execute
           test -f ops/testserver/homelab-stage6-executor-ssh
+          test -f scripts/stage6-normalize-executor-key.sh
           test -f scripts/validate-stage6-service-manifest.py
           test -f config/services/dashy-4.6.0.json
           test -s "$STAGE6_KNOWN_HOSTS"
+
+          printf '%s  %s\n' \
+            "$STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256" \
+            scripts/stage6-normalize-executor-key.sh | \
+          sha256sum -c - >/dev/null
 
           git merge-base --is-ancestor "$STAGE6_CORE_SOURCE_COMMIT" HEAD
 
@@ -366,9 +374,17 @@ pipeline {
 
             [ "$STAGE6_EXECUTOR_PING_USER" = "homelab-stage6-executor" ]
 
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+            scripts/stage6-normalize-executor-key.sh \
+              "$STAGE6_EXECUTOR_PING_KEY" \
+              "$NORMALIZED_EXECUTOR_KEY" \
+              "$STAGE6_EXECUTOR_FINGERPRINT" \
+              > artifacts/stage6-dashy-executor-ping-key-validation.txt
+
             ssh \
               -n \
-              -i "$STAGE6_EXECUTOR_PING_KEY" \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
               -o IdentitiesOnly=yes \
               -o BatchMode=yes \
               -o PasswordAuthentication=no \
@@ -404,9 +420,17 @@ pipeline {
 
             [ "$STAGE6_ARM_USER" = "homelab-stage6-executor" ]
 
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+            scripts/stage6-normalize-executor-key.sh \
+              "$STAGE6_ARM_KEY" \
+              "$NORMALIZED_EXECUTOR_KEY" \
+              "$STAGE6_EXECUTOR_FINGERPRINT" \
+              > artifacts/stage6-dashy-arm-key-validation.txt
+
             ssh \
               -n \
-              -i "$STAGE6_ARM_KEY" \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
               -o IdentitiesOnly=yes \
               -o BatchMode=yes \
               -o PasswordAuthentication=no \
@@ -466,9 +490,17 @@ pipeline {
 
                 [ "$STAGE6_DEPLOY_USER" = "homelab-stage6-executor" ] || exit 97
 
+                NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")" || exit 96
+                trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+                scripts/stage6-normalize-executor-key.sh \
+                  "$STAGE6_DEPLOY_KEY" \
+                  "$NORMALIZED_EXECUTOR_KEY" \
+                  "$STAGE6_EXECUTOR_FINGERPRINT" \
+                  > artifacts/stage6-dashy-deploy-key-validation.txt || exit 96
+
                 ssh \
                   -n \
-                  -i "$STAGE6_DEPLOY_KEY" \
+                  -i "$NORMALIZED_EXECUTOR_KEY" \
                   -o IdentitiesOnly=yes \
                   -o BatchMode=yes \
                   -o PasswordAuthentication=no \
@@ -486,6 +518,16 @@ pipeline {
           }
 
           env.STAGE6_DEPLOY_RC = rc.toString()
+
+          if (rc == 96 || rc == 97) {
+            error(
+              "Stage 6 deploy was not attempted because the local executor " +
+              "credential gate failed with rc=${rc}. The update may remain " +
+              "armed, but the candidate is unconsumed because deploy SSH was " +
+              "never invoked. Rollback must not be attempted; controlled " +
+              "recovery only."
+            )
+          }
 
           if (rc == 0) {
             def raw = readFile('artifacts/stage6-dashy-deploy.json')
@@ -526,7 +568,10 @@ pipeline {
     stage('Rollback on deploy failure') {
       when {
         expression {
-          return env.STAGE6_DEPLOY_RC != null && env.STAGE6_DEPLOY_RC != '0'
+          return env.STAGE6_DEPLOY_RC != null &&
+                 env.STAGE6_DEPLOY_RC != '0' &&
+                 env.STAGE6_DEPLOY_RC != '96' &&
+                 env.STAGE6_DEPLOY_RC != '97'
         }
       }
       steps {
@@ -547,9 +592,17 @@ pipeline {
 
                 [ "$STAGE6_ROLLBACK_USER" = "homelab-stage6-executor" ] || exit 97
 
+                NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")" || exit 96
+                trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+                scripts/stage6-normalize-executor-key.sh \
+                  "$STAGE6_ROLLBACK_KEY" \
+                  "$NORMALIZED_EXECUTOR_KEY" \
+                  "$STAGE6_EXECUTOR_FINGERPRINT" \
+                  > artifacts/stage6-dashy-rollback-key-validation.txt || exit 96
+
                 ssh \
                   -n \
-                  -i "$STAGE6_ROLLBACK_KEY" \
+                  -i "$NORMALIZED_EXECUTOR_KEY" \
                   -o IdentitiesOnly=yes \
                   -o BatchMode=yes \
                   -o PasswordAuthentication=no \
@@ -627,9 +680,17 @@ pipeline {
 
             [ "$STAGE6_DISARM_USER" = "homelab-stage6-executor" ]
 
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+            scripts/stage6-normalize-executor-key.sh \
+              "$STAGE6_DISARM_KEY" \
+              "$NORMALIZED_EXECUTOR_KEY" \
+              "$STAGE6_EXECUTOR_FINGERPRINT" \
+              > artifacts/stage6-dashy-disarm-key-validation.txt
+
             ssh \
               -n \
-              -i "$STAGE6_DISARM_KEY" \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
               -o IdentitiesOnly=yes \
               -o BatchMode=yes \
               -o PasswordAuthentication=no \
