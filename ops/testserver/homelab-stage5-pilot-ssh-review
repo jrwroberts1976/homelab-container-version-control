@@ -1,0 +1,58 @@
+#!/bin/bash
+set -u
+
+POLICY_SOURCE="config/stage5-maintenance-page-pilot.json"
+ORIGINAL="${SSH_ORIGINAL_COMMAND:-}"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+emit_status() {
+  local action="$1"
+
+  cat <<JSON
+{
+  "schema_version": 1,
+  "mode": "review-only",
+  "runner": "stage5-pilot-review",
+  "service": "maintenance-page",
+  "action": "$action",
+  "policy_source": "$POLICY_SOURCE",
+  "deployment": {
+    "allowed": false,
+    "performed": false,
+    "deploy_command_enabled": false,
+    "rollback_command_enabled": false
+  },
+  "result": "ready-for-review"
+}
+JSON
+}
+
+case "$ORIGINAL" in
+  "ping")
+    emit_status "ping"
+    ;;
+
+  "inspect maintenance-page")
+    emit_status "inspect"
+    ;;
+
+  "deploy maintenance-page")
+    fail "Stage 5 deploy command is intentionally disabled in review wrapper"
+    ;;
+
+  "rollback maintenance-page")
+    fail "Stage 5 rollback command is intentionally disabled in review wrapper"
+    ;;
+
+  "")
+    fail "command required"
+    ;;
+
+  *)
+    fail "command not permitted"
+    ;;
+esac
