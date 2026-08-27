@@ -1,5 +1,5 @@
 #!/bin/bash
-set -u
+set -euo pipefail
 
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -337,10 +337,10 @@ arm_pilot() {
     fi
 
     rm -f "$backup"
-    return "$rc"
+    exit "$rc"
   }
 
-  trap cleanup_arm RETURN
+  trap cleanup_arm EXIT
 
   install -o root -g root -m 0600 "$ACTIVE_POLICY" "$backup"
   install -o root -g root -m 0600 "$EXECUTION_POLICY" "$policy_tmp"
@@ -358,7 +358,7 @@ arm_pilot() {
     fail "enable file pilot ID mismatch after transition"
 
   armed=1
-  trap - RETURN
+  trap - EXIT
   rm -f "$backup"
 
   jq -n \
