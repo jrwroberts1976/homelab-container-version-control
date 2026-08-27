@@ -1,0 +1,59 @@
+#!/bin/bash
+set -u
+
+AUTHORITY_GATE="/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate"
+ORIGINAL="${SSH_ORIGINAL_COMMAND:-}"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+emit_ping() {
+  cat <<'JSON'
+{
+  "schema_version": 1,
+  "mode": "stage5-inspection-only",
+  "runner": "stage5-pilot-inspect",
+  "service": "maintenance-page",
+  "inspection": {
+    "allowed": true
+  },
+  "deployment": {
+    "allowed": false,
+    "performed": false,
+    "deploy_command_enabled": false,
+    "rollback_command_enabled": false
+  },
+  "result": "ready"
+}
+JSON
+}
+
+case "$ORIGINAL" in
+  "ping")
+    emit_ping
+    ;;
+
+  "inspect maintenance-page")
+    exec sudo -n \
+      "$AUTHORITY_GATE" \
+      inspect
+    ;;
+
+  "deploy maintenance-page")
+    fail "Stage 5 deploy command is not available in inspection-only wrapper"
+    ;;
+
+  "rollback maintenance-page")
+    fail "Stage 5 rollback command is not available in inspection-only wrapper"
+    ;;
+
+  "")
+    fail "command required"
+    ;;
+
+  *)
+    fail "command not permitted"
+    ;;
+esac
