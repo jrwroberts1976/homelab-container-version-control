@@ -6,7 +6,8 @@
   "host": "TestServer",
   "compose_project": "maintenance-page",
   "compose_file": "/home/james/docker/stacks/maintenance-page/docker-compose.yml",
-  "docker_env_review_commit": "b28e3a79a41a0084eacd94efb3fbb76cbf7d0ddf",
+  "docker_env_authority_commit": "f0430e1d9ee91ba4dfba7db34d0e9f0e201a8883",
+  "docker_env_authority_checkout": "/var/lib/homelab-stage5/authority/docker-env",
   "configuration": {
     "compose_sha256": "26fb63ff74360932f0dbf9eb27876c67bb3212767aaa6a11ea6c3370750eeadf",
     "nginx_config_sha256": "5f776d04e520489a0958d2f267dcf034448a3c385b88f142ae7aa67d53a34d13",
