@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/jrwroberts1976/homelab-container-version-control/config/service-update-manifest.schema.json",
-  "title": "Stage 6 Service Update Manifest",
+  "title": "Stage 6 Registry Service Update Manifest",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -23,21 +23,23 @@
     "service": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "container", "host", "risk_class", "compose"],
+      "required": ["name", "container", "host", "image_type", "risk_class", "compose"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "container": { "type": "string", "minLength": 1 },
         "host": { "type": "string", "minLength": 1 },
-        "risk_class": { "enum": ["low", "medium", "high", "excluded"] },
+        "image_type": { "const": "registry-image" },
+        "risk_class": { "enum": ["low", "medium"] },
         "compose": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["project", "service", "project_directory", "compose_file"],
+          "required": ["project", "service", "project_directory", "compose_file", "image_variable"],
           "properties": {
             "project": { "type": "string", "minLength": 1 },
             "service": { "type": "string", "minLength": 1 },
             "project_directory": { "type": "string", "pattern": "^/" },
-            "compose_file": { "type": "string", "pattern": "^/" }
+            "compose_file": { "type": "string", "pattern": "^/" },
+            "image_variable": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
           }
         }
       }
@@ -45,25 +47,11 @@
     "authority": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "revision", "compose_sha256", "runtime_files"],
+      "required": ["repository", "revision", "compose_sha256"],
       "properties": {
         "repository": { "const": "docker-env" },
         "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "compose_sha256": { "$ref": "#/$defs/sha256" },
-        "runtime_files": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path", "role", "sha256"],
-            "properties": {
-              "path": { "type": "string", "pattern": "^/" },
-              "role": { "type": "string", "minLength": 1 },
-              "sha256": { "$ref": "#/$defs/sha256" }
-            }
-          },
-          "uniqueItems": true
-        }
+        "compose_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
     "versions": {
@@ -193,19 +181,35 @@
       }
     },
     "health": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["strategy", "expected", "timeout_seconds"],
-      "properties": {
-        "strategy": { "const": "docker-health" },
-        "expected": { "const": "healthy" },
-        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 }
-      }
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "expected", "timeout_seconds"],
+          "properties": {
+            "strategy": { "const": "docker-health" },
+            "expected": { "const": "healthy" },
+            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "url", "expected_status", "marker", "timeout_seconds"],
+          "properties": {
+            "strategy": { "const": "http" },
+            "url": { "type": "string", "pattern": "^https?://" },
+            "expected_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "marker": { "type": ["string", "null"] },
+            "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 }
+          }
+        }
+      ]
     },
     "protection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["containers", "compare"],
+      "required": ["containers", "compare", "all_other_containers_unchanged"],
       "properties": {
         "containers": {
           "type": "array",
@@ -218,7 +222,8 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": { "enum": ["container_id", "restart_count"] }
-        }
+        },
+        "all_other_containers_unchanged": { "const": true }
       }
     },
     "execution": {
@@ -228,6 +233,7 @@
         "human_approval_required",
         "post_approval_reinspection_required",
         "one_shot_required",
+        "candidate_acquisition",
         "candidate_must_be_local_before_arm",
         "deployment_pull_allowed",
         "rollback_required",
@@ -237,6 +243,7 @@
         "human_approval_required": { "const": true },
         "post_approval_reinspection_required": { "const": true },
         "one_shot_required": { "const": true },
+        "candidate_acquisition": { "const": "separate-reviewed-step" },
         "candidate_must_be_local_before_arm": { "const": true },
         "deployment_pull_allowed": { "const": false },
         "rollback_required": { "const": true },
@@ -255,7 +262,7 @@
     },
     "immutableRef": {
       "type": "string",
-      "pattern": "^[^@[:space:]]+@sha256:[0-9a-f]{64}$"
+      "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
     },
     "platform": {
       "type": "object",
