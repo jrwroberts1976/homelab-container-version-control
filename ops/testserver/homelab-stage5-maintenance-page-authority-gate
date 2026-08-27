@@ -7,6 +7,7 @@ export PATH
 SERVICE="maintenance-page"
 INSTALLED_SELF="/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate"
 INNER_HELPER="/usr/local/libexec/homelab-stage5-maintenance-page"
+INSPECTOR="/usr/local/libexec/homelab-stage5-maintenance-page-inspect"
 POLICY_FILE="/etc/homelab-stage5/maintenance-page.policy.json"
 ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"
 AUTHORITY_DIR="/var/lib/homelab-stage5/authority/docker-env"
@@ -75,7 +76,10 @@ verify_hash() {
 }
 
 require_installed_context() {
+  local action="$1"
   local self actual_gate_sha expected_gate_sha
+  local actual_helper_sha expected_helper_sha
+  local actual_inspector_sha expected_inspector_sha
 
   [ "$(id -u)" -eq 0 ] ||
     fail "authority gate execution requires root"
@@ -87,25 +91,41 @@ require_installed_context() {
 
   require_secure_root_file "$INSTALLED_SELF"
   require_secure_root_file "$INNER_HELPER"
+  require_secure_root_file "$INSPECTOR"
   require_secure_root_file "$POLICY_FILE"
-  require_secure_root_file "$ENABLE_FILE"
   require_secure_root_dir "$AUTHORITY_DIR"
+
+  if [ "$action" = "inspect" ]; then
+    [ ! -e "$ENABLE_FILE" ] ||
+      fail "enable file must be absent for inspection-only authority"
+  else
+    require_secure_root_file "$ENABLE_FILE"
+  fi
 
   actual_gate_sha="$(sha256sum "$INSTALLED_SELF" | awk '{print $1}')"
   expected_gate_sha="$(policy_string '.implementation.authority_gate_sha256')"
 
   [ "$actual_gate_sha" = "$expected_gate_sha" ] ||
     fail "installed authority gate hash does not match policy"
+
+  actual_helper_sha="$(sha256sum "$INNER_HELPER" | awk '{print $1}')"
+  expected_helper_sha="$(policy_string '.implementation.helper_sha256')"
+
+  [ "$actual_helper_sha" = "$expected_helper_sha" ] ||
+    fail "installed helper hash does not match policy"
+
+  actual_inspector_sha="$(sha256sum "$INSPECTOR" | awk '{print $1}')"
+  expected_inspector_sha="$(policy_string '.implementation.inspector_sha256')"
+
+  [ "$actual_inspector_sha" = "$expected_inspector_sha" ] ||
+    fail "installed inspector hash does not match policy"
 }
 
-require_execution_policy() {
-  local pilot_id enable_value authority_path
+require_common_policy_identity() {
+  local authority_path
 
   [ "$(policy_string '.schema_version | tostring')" = "1" ] ||
     fail "unsupported policy schema"
-
-  [ "$(policy_string '.mode')" = "execution-enabled" ] ||
-    fail "policy mode is not execution-enabled"
 
   [ "$(policy_string '.service')" = "$SERVICE" ] ||
     fail "policy service mismatch"
@@ -113,10 +133,48 @@ require_execution_policy() {
   [ "$(policy_string '.host')" = "TestServer" ] ||
     fail "policy host mismatch"
 
+  [ "$(policy_string '.compose_project')" = "$SERVICE" ] ||
+    fail "policy Compose project mismatch"
+
+  [ "$(policy_string '.compose_file')" = "$LIVE_STACK/docker-compose.yml" ] ||
+    fail "policy Compose file mismatch"
+
   authority_path="$(policy_string '.docker_env_authority_checkout')"
 
   [ "$authority_path" = "$AUTHORITY_DIR" ] ||
     fail "policy docker-env authority checkout mismatch"
+}
+
+require_inspection_policy() {
+  require_common_policy_identity
+
+  [ "$(policy_string '.mode')" = "inspection-ready" ] ||
+    fail "policy mode is not inspection-ready"
+
+  jq -e '
+    .inspection.allowed == true
+    and .inspection.performed == false
+    and .deployment.allowed == false
+    and .deployment.performed == false
+    and .deployment.deploy_command_enabled == false
+    and .deployment.rollback_command_enabled == false
+  ' "$POLICY_FILE" >/dev/null ||
+    fail "policy is not inspection-only"
+}
+
+require_execution_policy() {
+  local pilot_id enable_value
+
+  require_common_policy_identity
+
+  [ "$(policy_string '.mode')" = "execution-enabled" ] ||
+    fail "policy mode is not execution-enabled"
+
+  jq -e '
+    .inspection.allowed == true
+    and .deployment.allowed == true
+  ' "$POLICY_FILE" >/dev/null ||
+    fail "execution policy is not enabled"
 
   pilot_id="$(policy_string '.pilot_id')"
   enable_value="$(tr -d '\r\n' < "$ENABLE_FILE")"
@@ -188,16 +246,23 @@ verify_authoritative_configuration() {
 ACTION="${1:-}"
 
 case "$ACTION" in
-  deploy|rollback)
+  inspect)
+    require_installed_context inspect
+    require_inspection_policy
+    verify_git_authority
+    verify_authoritative_configuration
+    exec "$INSPECTOR" inspect
     ;;
+
+  deploy|rollback)
+    require_installed_context "$ACTION"
+    require_execution_policy
+    verify_git_authority
+    verify_authoritative_configuration
+    exec "$INNER_HELPER" "$ACTION"
+    ;;
+
   *)
     fail "action not permitted"
     ;;
 esac
-
-require_installed_context
-require_execution_policy
-verify_git_authority
-verify_authoritative_configuration
-
-exec "$INNER_HELPER" "$ACTION"
