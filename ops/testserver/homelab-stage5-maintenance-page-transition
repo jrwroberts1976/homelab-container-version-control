@@ -1,0 +1,472 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+SERVICE="maintenance-page"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage5-maintenance-page-transition"
+ACTIVE_POLICY="/etc/homelab-stage5/maintenance-page.policy.json"
+EXECUTION_POLICY="/etc/homelab-stage5/maintenance-page.execution-policy.json"
+ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"
+STATE_DIR="/var/lib/homelab-stage5/maintenance-page"
+AUTHORITY_GATE="/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate"
+DEPLOY_HELPER="/usr/local/libexec/homelab-stage5-maintenance-page"
+INSPECTOR="/usr/local/libexec/homelab-stage5-maintenance-page-inspect"
+AUTHORITY_DIR="/var/lib/homelab-stage5/authority/docker-env"
+AUTHORITY_STACK="${AUTHORITY_DIR}/stacks/maintenance-page"
+LIVE_STACK="/home/james/docker/stacks/maintenance-page"
+
+EXPECTED_INSPECTION_POLICY_SHA256="adcac66121b04d4b0b4f0a9962c5e75e5c9b3a801a5b28f222f04a6670973f6f"
+EXPECTED_AUTHORITY_GATE_SHA256="561499a0e327f02e4df7fdabf40ab1d0660dc5ed51622061c568f9deaaa4dbda"
+EXPECTED_DEPLOY_HELPER_SHA256="a0df7b46aa01ffc9ef3fbf43cea43caeef34681ef22b759ae822ed2832cfc42a"
+EXPECTED_INSPECTOR_SHA256="64dc6526e66a9e6878ca23c1703a9d7bb11c82b7f60cf7b8aae714b2ed9cb213"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+policy_string() {
+  local file="$1"
+  local query="$2"
+
+  jq -er \
+    "$query | strings | select(length > 0)" \
+    "$file" \
+    2>/dev/null ||
+    fail "policy value unavailable: $query"
+}
+
+require_secure_root_file() {
+  local file="$1"
+
+  [ -f "$file" ] ||
+    fail "required root-owned file missing: $file"
+
+  [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+    fail "file is not root:root: $file"
+
+  if find "$file" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "file is group/other writable: $file"
+  fi
+}
+
+require_secure_root_dir() {
+  local dir="$1"
+
+  [ -d "$dir" ] ||
+    fail "required root-owned directory missing: $dir"
+
+  [ "$(stat -c '%U:%G' "$dir")" = "root:root" ] ||
+    fail "directory is not root:root: $dir"
+
+  if find "$dir" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "directory is group/other writable: $dir"
+  fi
+}
+
+sha256_of() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+require_review_constants() {
+  [[ "$EXPECTED_INSPECTION_POLICY_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "inspection policy SHA256 is not review-pinned"
+
+  [[ "$EXPECTED_AUTHORITY_GATE_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "authority gate SHA256 is not review-pinned"
+
+  [[ "$EXPECTED_DEPLOY_HELPER_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "deployment helper SHA256 is not review-pinned"
+
+  [[ "$EXPECTED_INSPECTOR_SHA256" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "inspector SHA256 is not review-pinned"
+}
+
+require_installed_context() {
+  local self
+
+  [ "$(id -u)" -eq 0 ] ||
+    fail "transition execution requires root"
+
+  self="$(readlink -f "$0")"
+
+  [ "$self" = "$INSTALLED_SELF" ] ||
+    fail "transition helper is not running from reviewed installed path"
+
+  require_review_constants
+  require_secure_root_file "$INSTALLED_SELF"
+  require_secure_root_file "$ACTIVE_POLICY"
+  require_secure_root_file "$EXECUTION_POLICY"
+  require_secure_root_file "$AUTHORITY_GATE"
+  require_secure_root_file "$DEPLOY_HELPER"
+  require_secure_root_file "$INSPECTOR"
+  require_secure_root_dir "$STATE_DIR"
+  require_secure_root_dir "$AUTHORITY_DIR"
+
+  [ "$(sha256_of "$AUTHORITY_GATE")" = "$EXPECTED_AUTHORITY_GATE_SHA256" ] ||
+    fail "authority gate hash mismatch"
+
+  [ "$(sha256_of "$DEPLOY_HELPER")" = "$EXPECTED_DEPLOY_HELPER_SHA256" ] ||
+    fail "deployment helper hash mismatch"
+
+  [ "$(sha256_of "$INSPECTOR")" = "$EXPECTED_INSPECTOR_SHA256" ] ||
+    fail "inspector hash mismatch"
+}
+
+verify_policy_pair() {
+  local inspect_pilot execute_pilot
+  local inspect_service execute_service
+  local inspect_host execute_host
+  local inspect_commit execute_commit
+  local inspect_candidate execute_candidate
+  local inspect_rollback execute_rollback
+  local inspect_config execute_config
+  local implementation_commit
+
+  [ "$(sha256_of "$ACTIVE_POLICY")" = "$EXPECTED_INSPECTION_POLICY_SHA256" ] ||
+    fail "active inspection policy hash mismatch"
+
+  [ "$(policy_string "$ACTIVE_POLICY" '.mode')" = "inspection-ready" ] ||
+    fail "active policy is not inspection-ready"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.mode')" = "execution-enabled" ] ||
+    fail "staged policy is not execution-enabled"
+
+  if grep -Fq 'REPLACE_AFTER_REVIEW' "$EXECUTION_POLICY"; then
+    fail "staged execution policy still contains review placeholders"
+  fi
+
+  inspect_pilot="$(policy_string "$ACTIVE_POLICY" '.pilot_id')"
+  execute_pilot="$(policy_string "$EXECUTION_POLICY" '.pilot_id')"
+  inspect_service="$(policy_string "$ACTIVE_POLICY" '.service')"
+  execute_service="$(policy_string "$EXECUTION_POLICY" '.service')"
+  inspect_host="$(policy_string "$ACTIVE_POLICY" '.host')"
+  execute_host="$(policy_string "$EXECUTION_POLICY" '.host')"
+  inspect_commit="$(policy_string "$ACTIVE_POLICY" '.docker_env_authority_commit')"
+  execute_commit="$(policy_string "$EXECUTION_POLICY" '.docker_env_authority_commit')"
+  inspect_candidate="$(policy_string "$ACTIVE_POLICY" '.images.candidate')"
+  execute_candidate="$(policy_string "$EXECUTION_POLICY" '.images.candidate')"
+  inspect_rollback="$(policy_string "$ACTIVE_POLICY" '.images.rollback')"
+  execute_rollback="$(policy_string "$EXECUTION_POLICY" '.images.rollback')"
+  inspect_config="$(jq -cS '.configuration' "$ACTIVE_POLICY")"
+  execute_config="$(jq -cS '.configuration' "$EXECUTION_POLICY")"
+
+  [ "$inspect_pilot" = "$execute_pilot" ] ||
+    fail "pilot ID changes across policy transition"
+
+  [ "$inspect_service" = "$SERVICE" ] &&
+  [ "$execute_service" = "$SERVICE" ] ||
+    fail "policy service mismatch"
+
+  [ "$inspect_host" = "TestServer" ] &&
+  [ "$execute_host" = "TestServer" ] ||
+    fail "policy host mismatch"
+
+  [ "$inspect_commit" = "$execute_commit" ] ||
+    fail "docker-env authority commit changes across transition"
+
+  [ "$inspect_candidate" = "$execute_candidate" ] ||
+    fail "candidate changes across policy transition"
+
+  [ "$inspect_rollback" = "$execute_rollback" ] ||
+    fail "rollback changes across policy transition"
+
+  [ "$inspect_config" = "$execute_config" ] ||
+    fail "configuration hashes change across policy transition"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.implementation.authority_gate_sha256')" = "$EXPECTED_AUTHORITY_GATE_SHA256" ] ||
+    fail "execution policy authority-gate hash mismatch"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.implementation.helper_sha256')" = "$EXPECTED_DEPLOY_HELPER_SHA256" ] ||
+    fail "execution policy helper hash mismatch"
+
+  [ "$(policy_string "$EXECUTION_POLICY" '.implementation.inspector_sha256')" = "$EXPECTED_INSPECTOR_SHA256" ] ||
+    fail "execution policy inspector hash mismatch"
+
+  implementation_commit="$(policy_string "$EXECUTION_POLICY" '.implementation.implementation_commit')"
+  [[ "$implementation_commit" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "execution policy implementation commit is not pinned"
+
+  jq -e '
+    .inspection.allowed == true
+    and .inspection.performed == false
+    and .deployment.allowed == false
+    and .deployment.performed == false
+    and .deployment.deploy_command_enabled == false
+    and .deployment.rollback_command_enabled == false
+  ' "$ACTIVE_POLICY" >/dev/null ||
+    fail "active policy is not inspection-only"
+
+  jq -e '
+    .inspection.allowed == true
+    and .deployment.allowed == true
+    and .deployment.performed == false
+    and .deployment.deploy_command_enabled == true
+    and .deployment.rollback_command_enabled == true
+  ' "$EXECUTION_POLICY" >/dev/null ||
+    fail "staged execution policy gates are not exact"
+}
+
+verify_git_authority() {
+  local expected actual status
+
+  expected="$(policy_string "$ACTIVE_POLICY" '.docker_env_authority_commit')"
+
+  [[ "$expected" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "docker-env authority commit is not pinned"
+
+  actual="$(git -C "$AUTHORITY_DIR" rev-parse HEAD 2>/dev/null)" ||
+    fail "docker-env authority commit unavailable"
+
+  [ "$actual" = "$expected" ] ||
+    fail "docker-env authority commit mismatch"
+
+  status="$(git -C "$AUTHORITY_DIR" status --porcelain 2>/dev/null)" ||
+    fail "docker-env authority checkout status unavailable"
+
+  [ -z "$status" ] ||
+    fail "docker-env authority checkout is dirty"
+}
+
+verify_hash() {
+  local file="$1"
+  local expected="$2"
+
+  [ -f "$file" ] ||
+    fail "required configuration file missing: $file"
+
+  [ "$(sha256_of "$file")" = "$expected" ] ||
+    fail "configuration hash mismatch: $file"
+}
+
+verify_configuration() {
+  local compose_sha nginx_sha index_sha
+
+  compose_sha="$(policy_string "$ACTIVE_POLICY" '.configuration.compose_sha256')"
+  nginx_sha="$(policy_string "$ACTIVE_POLICY" '.configuration.nginx_config_sha256')"
+  index_sha="$(policy_string "$ACTIVE_POLICY" '.configuration.index_html_sha256')"
+
+  verify_hash "$AUTHORITY_STACK/docker-compose.yml" "$compose_sha"
+  verify_hash "$AUTHORITY_STACK/nginx/default.conf" "$nginx_sha"
+  verify_hash "$AUTHORITY_STACK/html/index.html" "$index_sha"
+
+  verify_hash "$LIVE_STACK/docker-compose.yml" "$compose_sha"
+  verify_hash "$LIVE_STACK/nginx/default.conf" "$nginx_sha"
+  verify_hash "$LIVE_STACK/html/index.html" "$index_sha"
+}
+
+current_digest() {
+  local image_id digest
+
+  image_id="$(docker inspect -f '{{.Image}}' "$SERVICE" 2>/dev/null)" ||
+    fail "maintenance-page container unavailable"
+
+  digest="$(
+    docker image inspect "$image_id" \
+      --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+      2>/dev/null |
+    grep -E '^nginx@sha256:[0-9a-f]{64}$' |
+    head -1
+  )"
+
+  [ -n "$digest" ] ||
+    fail "current immutable nginx digest unavailable"
+
+  printf '%s\n' "$digest"
+}
+
+verify_image_local_arm64() {
+  local image="$1"
+  local platform
+
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    fail "required immutable image is not local: $image"
+
+  platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
+
+  [ "$platform" = "linux/arm64" ] ||
+    fail "image platform is not linux/arm64: $image"
+}
+
+verify_health() {
+  local url marker tmp code
+
+  url="$(policy_string "$ACTIVE_POLICY" '.runtime.health_url')"
+  marker="$(policy_string "$ACTIVE_POLICY" '.runtime.health_marker')"
+  tmp="$(mktemp)"
+
+  code="$(
+    curl -sS -o "$tmp" -w '%{http_code}' "$url" 2>/dev/null || true
+  )"
+
+  [ "$code" = "200" ] || {
+    rm -f "$tmp"
+    fail "health endpoint did not return HTTP 200"
+  }
+
+  grep -Fq "$marker" "$tmp" || {
+    rm -f "$tmp"
+    fail "health marker missing"
+  }
+
+  rm -f "$tmp"
+}
+
+arm_pilot() {
+  local pilot candidate rollback consumed backup policy_tmp enable_tmp armed execution_policy_sha
+
+  require_installed_context
+  verify_policy_pair
+  verify_git_authority
+  verify_configuration
+
+  [ ! -e "$ENABLE_FILE" ] ||
+    fail "enable file already exists"
+
+  pilot="$(policy_string "$ACTIVE_POLICY" '.pilot_id')"
+  candidate="$(policy_string "$ACTIVE_POLICY" '.images.candidate')"
+  rollback="$(policy_string "$ACTIVE_POLICY" '.images.rollback')"
+  consumed="${STATE_DIR}/${pilot}.consumed"
+  execution_policy_sha="$(sha256_of "$EXECUTION_POLICY")"
+
+  [ ! -e "$consumed" ] ||
+    fail "pilot ID has already been consumed"
+
+  [ "$(current_digest)" = "$rollback" ] ||
+    fail "current runtime digest is not the rollback baseline"
+
+  verify_image_local_arm64 "$candidate"
+  verify_image_local_arm64 "$rollback"
+  verify_health
+
+  backup="${ACTIVE_POLICY}.pre-arm.$$"
+  policy_tmp="${ACTIVE_POLICY}.arm.$$"
+  enable_tmp="${ENABLE_FILE}.arm.$$"
+  armed=0
+
+  cleanup_arm() {
+    local rc=$?
+
+    if [ "$armed" -ne 1 ]; then
+      rm -f "$policy_tmp" "$enable_tmp"
+
+      if [ -f "$backup" ]; then
+        install -o root -g root -m 0600 "$backup" "$ACTIVE_POLICY" || true
+      fi
+
+      rm -f "$ENABLE_FILE" || true
+    fi
+
+    rm -f "$backup"
+    exit "$rc"
+  }
+
+  trap cleanup_arm EXIT
+
+  install -o root -g root -m 0600 "$ACTIVE_POLICY" "$backup"
+  install -o root -g root -m 0600 "$EXECUTION_POLICY" "$policy_tmp"
+  mv -f "$policy_tmp" "$ACTIVE_POLICY"
+
+  printf '%s\n' "$pilot" > "$enable_tmp"
+  chown root:root "$enable_tmp"
+  chmod 0600 "$enable_tmp"
+  mv -f "$enable_tmp" "$ENABLE_FILE"
+
+  [ "$(sha256_of "$ACTIVE_POLICY")" = "$execution_policy_sha" ] ||
+    fail "active policy does not exactly match staged execution policy"
+
+  [ "$(tr -d '\r\n' < "$ENABLE_FILE")" = "$pilot" ] ||
+    fail "enable file pilot ID mismatch after transition"
+
+  armed=1
+  trap - EXIT
+  rm -f "$backup"
+
+  jq -n \
+    --arg pilot_id "$pilot" \
+    --arg service "$SERVICE" \
+    --arg policy_sha256 "$execution_policy_sha" \
+    '{
+      schema_version: 1,
+      mode: "stage5-execution-transition",
+      action: "arm",
+      pilot_id: $pilot_id,
+      service: $service,
+      execution_policy_sha256: $policy_sha256,
+      deployment: {
+        activated: true,
+        performed: false
+      },
+      result: "armed"
+    }'
+}
+
+disarm_pilot() {
+  local pilot consumed current candidate rollback
+
+  require_installed_context
+
+  [ "$(sha256_of "$ACTIVE_POLICY")" = "$(sha256_of "$EXECUTION_POLICY")" ] ||
+    fail "active policy does not match staged execution policy"
+
+  require_secure_root_file "$ENABLE_FILE"
+
+  pilot="$(policy_string "$ACTIVE_POLICY" '.pilot_id')"
+  candidate="$(policy_string "$ACTIVE_POLICY" '.images.candidate')"
+  rollback="$(policy_string "$ACTIVE_POLICY" '.images.rollback')"
+  consumed="${STATE_DIR}/${pilot}.consumed"
+
+  [ "$(tr -d '\r\n' < "$ENABLE_FILE")" = "$pilot" ] ||
+    fail "enable file pilot ID mismatch"
+
+  [ -f "$consumed" ] ||
+    fail "pilot has not been consumed"
+
+  current="$(current_digest)"
+
+  if [ "$current" != "$candidate" ] && [ "$current" != "$rollback" ]; then
+    fail "runtime is neither candidate nor rollback; refusing disarm"
+  fi
+
+  rm -f "$ENABLE_FILE"
+
+  [ ! -e "$ENABLE_FILE" ] ||
+    fail "enable file still exists after disarm"
+
+  jq -n \
+    --arg pilot_id "$pilot" \
+    --arg service "$SERVICE" \
+    --arg current "$current" \
+    '{
+      schema_version: 1,
+      mode: "stage5-execution-transition",
+      action: "disarm",
+      pilot_id: $pilot_id,
+      service: $service,
+      current: $current,
+      deployment: {
+        activated: false
+      },
+      result: "disarmed"
+    }'
+}
+
+ACTION="${1:-}"
+
+case "$ACTION" in
+  arm)
+    arm_pilot
+    ;;
+  disarm)
+    disarm_pilot
+    ;;
+  *)
+    fail "action not permitted"
+    ;;
+esac

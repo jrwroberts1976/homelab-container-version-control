@@ -1,0 +1,65 @@
+#!/bin/bash
+set -u
+
+TRANSITION="/usr/local/libexec/homelab-stage5-maintenance-page-transition"
+AUTHORITY_GATE="/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate"
+ORIGINAL="${SSH_ORIGINAL_COMMAND:-}"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+emit_ping() {
+  cat <<'JSON'
+{
+  "schema_version": 1,
+  "mode": "stage5-executor",
+  "service": "maintenance-page",
+  "execution_identity": true,
+  "result": "ready"
+}
+JSON
+}
+
+case "$ORIGINAL" in
+  "ping")
+    emit_ping
+    ;;
+
+  "arm maintenance-page")
+    exec sudo -n \
+      "$TRANSITION" \
+      arm
+    ;;
+
+  "deploy maintenance-page")
+    exec sudo -n \
+      "$AUTHORITY_GATE" \
+      deploy
+    ;;
+
+  "rollback maintenance-page")
+    exec sudo -n \
+      "$AUTHORITY_GATE" \
+      rollback
+    ;;
+
+  "disarm maintenance-page")
+    exec sudo -n \
+      "$TRANSITION" \
+      disarm
+    ;;
+
+  "inspect maintenance-page")
+    fail "inspection is not available through the Stage 5 executor identity"
+    ;;
+
+  "")
+    fail "command required"
+    ;;
+
+  *)
+    fail "command not permitted"
+    ;;
+esac
