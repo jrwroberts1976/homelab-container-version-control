@@ -8,140 +8,190 @@ Date: 2026-08-27
 
 Preserve the proven Stage 5 inspection-only boundary while adding a reviewed, one-shot path for Jenkins to perform exactly one human-approved `maintenance-page` container update.
 
+The existing inspection identity must remain permanently read-only. Execution uses a separate Jenkins SSH credential and a separate TestServer service account so the inspection boundary already proven does not need to be widened.
+
 The intended pilot flow is:
 
-1. Jenkins performs the existing remote `inspect maintenance-page` operation.
+1. Jenkins binds the existing inspection credential and runs `inspect maintenance-page`.
 2. Jenkins parses and independently validates the returned inspection artifact.
 3. Jenkins presents the exact current, candidate and rollback identities to a human approver.
-4. Jenkins blocks on the Pipeline `input` step; only the Jenkins user `james` may approve the pilot.
-5. After approval, Jenkins immediately repeats the read-only inspection and requires all critical identities to match the pre-approval artifact.
-6. Jenkins invokes one reviewed `arm maintenance-page` transition.
-7. Jenkins invokes one reviewed `deploy maintenance-page` action.
-8. The root helper verifies the exact candidate, rollback, Git authority, configuration, runtime shape, protected Jenkins/DinD state and HTTP health before and after mutation.
-9. If deployment succeeds, Jenkins records the result and removes the transient execution activation.
-10. If deployment fails after activation, rollback remains available only for the same consumed pilot. Jenkins attempts the exact reviewed rollback path when it is safe to do so; if rollback cannot be proven safe, execution remains fail-closed for manual recovery rather than improvising.
+4. Jenkins blocks on Pipeline `input`; only Jenkins user `james` may approve the first pilot.
+5. After approval, Jenkins repeats the read-only inspection with the inspection credential and requires all critical identities to match the pre-approval artifact.
+6. Only after those checks does Jenkins bind the separate executor credential.
+7. The executor invokes the literal `arm maintenance-page` transition.
+8. The executor invokes the literal `deploy maintenance-page` action.
+9. The root helper verifies the exact candidate, rollback, Git authority, configuration, runtime shape, protected Jenkins/DinD state and HTTP health before and after mutation.
+10. On success Jenkins records the result and invokes `disarm maintenance-page`.
+11. On deployment failure, rollback remains available only for the same consumed pilot. Jenkins may invoke only the reviewed literal rollback path; if rollback cannot be proven safe, the job fails closed for manual recovery rather than improvising.
 
-Jenkins must never receive general shell, Docker socket, arbitrary Docker/Compose, arbitrary service-name, arbitrary digest, arbitrary path, or arbitrary Git authority.
+Jenkins receives no general shell, Docker socket, arbitrary Docker/Compose, arbitrary service name, arbitrary digest, arbitrary path or arbitrary Git authority.
 
 ## Proven starting point
 
-The current host is inspection-only and has already passed the live execution-transition preflight.
+The current host is inspection-only and has passed the live execution-transition preflight.
 
 Current installed state:
 
-- account: `homelab-stage5-pilot`
-- Jenkins credential: `homelab-stage5-testserver-inspector`
+- inspection account: `homelab-stage5-pilot`
+- Jenkins inspection credential: `homelab-stage5-testserver-inspector`
 - Jenkins source identity: `172.30.255.250`
 - TestServer SSH destination: `172.30.255.249:22`
-- forced command: `/usr/local/sbin/homelab-stage5-pilot-ssh`
+- inspection forced command: `/usr/local/sbin/homelab-stage5-pilot-ssh`
 - authority gate: `/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate`
 - inspector: `/usr/local/libexec/homelab-stage5-maintenance-page-inspect`
-- policy mode: `inspection-ready`
+- active policy mode: `inspection-ready`
 - inspection sudo authority only
 - deployment helper absent
 - execution enable file absent
 - deploy sudo authority absent
 - rollback sudo authority absent
 - candidate and rollback images both local as Linux/ARM64
-- live configuration matches the pinned docker-env authority byte-for-byte
+- live configuration matches pinned docker-env authority byte-for-byte
 - maintenance-page remains on the exact rollback digest
 
-The existing Stage 5 positive and negative remote proofs are accepted prerequisites and must not be invalidated by this transition.
+The existing positive and negative remote inspection proofs remain accepted prerequisites and must continue to pass unchanged.
+
+## Identity separation
+
+### Inspection identity — permanent read-only
+
+Keep unchanged:
+
+- TestServer account: `homelab-stage5-pilot`
+- Jenkins credential: `homelab-stage5-testserver-inspector`
+- source restriction: `172.30.255.250`
+- forced wrapper permits only `ping` and `inspect maintenance-page`
+- sudo permits only exact `authority-gate inspect`
+
+The inspection identity must continue to reject:
+
+- `arm maintenance-page`
+- `deploy maintenance-page`
+- `rollback maintenance-page`
+- `disarm maintenance-page`
+- arbitrary shell and Docker commands
+
+### Execution identity — separate and narrowly scoped
+
+Introduce only after source review:
+
+- TestServer account: `homelab-stage5-executor`
+- Jenkins credential: `homelab-stage5-testserver-executor`
+- independent ED25519 key
+- source restriction: `restrict,from="172.30.255.250"`
+- public-key-only SSH
+- no password
+- no TTY
+- no forwarding
+- no tunnel
+- no user RC
+- no Docker group membership
+- forced command: `/usr/local/sbin/homelab-stage5-executor-ssh`
+
+The executor wrapper may allow only literal commands:
+
+- `ping`
+- `arm maintenance-page`
+- `deploy maintenance-page`
+- `rollback maintenance-page`
+- `disarm maintenance-page`
+
+It must reject `inspect maintenance-page`; inspection remains the responsibility of the read-only identity.
+
+The Jenkins Pipeline must not bind the executor credential before the human `input` step and the second post-approval read-only drift check.
+
+Human approval is a Jenkins workflow boundary rather than an interactive host prompt. The separate executor credential reduces accidental privilege crossover and preserves the previously proven inspection identity.
 
 ## Sequencing gap found during review
 
 The merged source intentionally separates inspection and execution:
 
-- `inspect` requires `mode=inspection-ready` and requires the enable file to be absent;
+- `inspect` requires `mode=inspection-ready` and enable file absent;
 - `deploy|rollback` requires `mode=execution-enabled`, an exact root-owned helper and a matching root-owned enable file.
 
-The installed inspection helper also requires `mode=inspection-ready` and fails if the enable file exists.
+The inspection helper itself also hard-requires `mode=inspection-ready` and fails when the enable file exists.
 
-Therefore a single Jenkins pipeline cannot safely move directly from the current inspection state to deployment merely by widening sudo. An explicit reviewed transition is required between human approval and deployment.
+Therefore simply widening the existing inspection sudo rule is rejected. An explicit reviewed state transition and separate executor identity are required.
 
 ## Required state machine
 
-The pilot must have explicit states rather than inferred authority.
-
 ### I0 — inspection-only
 
-This is the current proven state.
+Current proven state.
 
 Required:
 
 - active policy = exact `inspection-ready` policy;
 - enable file absent;
-- deployment helper may remain absent during the currently proven phase;
-- wrapper permits only `ping` and `inspect maintenance-page`;
-- deployment requests are rejected.
+- inspection identity unchanged;
+- all execution commands rejected.
 
 Effective deployment authority: **false**.
 
-### I1 — execution components staged but inactive
+### I1 — execution components staged, activation absent
 
-Before any human-approved execution test, reviewed execution files may be installed root-owned while effective deployment authority remains absent.
+Reviewed execution files may be installed root-owned without changing the active inspection policy or running container.
 
 Required:
 
 - exact reviewed deployment helper installed root:root and non-writable by non-root;
-- exact reviewed execution-transition helper installed root:root and non-writable by non-root;
+- exact reviewed transition helper installed root:root and non-writable by non-root;
 - exact reviewed execution policy staged at a separate root-only path;
-- state directory root:root and non-writable by non-root;
-- active policy remains the exact inspection-ready policy;
-- enable file absent;
-- existing inspection path still passes;
-- deploy/rollback remain rejected.
+- root-owned state directory present;
+- active policy remains exact `inspection-ready` policy;
+- enable file remains absent;
+- inspection identity and proof still pass unchanged;
+- maintenance-page remains exact rollback digest;
+- no container changes or restarts.
 
-Effective deployment authority: **false**.
-
-This state must be proven before any `arm` command is made reachable from Jenkins.
+The dedicated executor account/credential may be staged only after its wrapper and sudo surface are separately reviewed. Jenkins must not bind that credential before approval.
 
 ### A — armed after human approval
 
-The only allowed transition from I1 to A is the reviewed literal command:
+The only transition from I1 to A is the executor literal command:
 
 `arm maintenance-page`
 
-The arm helper runs as root through exact sudo authority and accepts no user-supplied path, digest, service, policy or pilot identifier.
+The transition helper accepts no caller-supplied path, digest, service, policy or pilot identifier.
 
 Before changing state it must revalidate:
 
 - root execution and exact installed paths;
-- exact hashes of the authority gate, arm helper, deployment helper and staged execution policy;
-- current active policy hash equals the accepted inspection-ready policy;
+- root ownership/non-writability of transition/helper/policies;
+- exact expected hash of the current inspection policy;
+- exact expected hash of the staged execution policy;
+- exact reviewed authority-gate and deployment-helper hashes;
 - enable file absent;
 - pilot consumed marker absent;
 - exact clean root-owned docker-env authority checkout;
 - exact docker-env authority commit;
 - exact authority/live configuration hashes;
-- exact rollback digest is current;
-- exact candidate and rollback images are local Linux/ARM64;
-- current runtime shape and health pass;
-- Jenkins and Jenkins-Docker protected identities are available.
+- exact rollback digest current;
+- candidate and rollback images local Linux/ARM64;
+- runtime shape and health pass;
+- Jenkins and Jenkins-Docker protected identities available.
 
-The arm operation then performs only two controlled state changes:
+The arm operation then performs only these controlled state changes:
 
 1. atomically replace the active policy with the exact pre-reviewed `execution-enabled` policy;
 2. atomically create the root-owned enable file containing only the policy-pinned pilot ID.
 
-The arm result must emit machine-readable JSON identifying the pilot and confirming activation. It must not mutate a container.
-
-Effective deployment authority: **true for the exact pilot only**.
+It emits machine-readable JSON and does not mutate any container.
 
 ### D — deployed / pilot consumed
 
-The existing deployment helper already consumes `${pilot_id}.consumed` before the Compose mutation.
+The existing deployment helper consumes `${pilot_id}.consumed` before Compose mutation.
 
-Deployment is allowed only when:
+Deployment is permitted only when:
 
-- state A is active;
-- current runtime digest is the exact rollback digest;
+- state A is valid;
+- current runtime digest equals exact rollback digest;
 - consumed marker does not yet exist;
 - candidate and rollback are exact/local/ARM64;
-- configuration and runtime shape match policy;
+- Git authority/configuration/runtime checks pass;
 - health passes before mutation.
 
-The only mutation primitive remains the internally constructed service-scoped command:
+The only mutation primitive remains the internally constructed one-service command:
 
 ```text
 MAINTENANCE_PAGE_IMAGE=<policy candidate>
@@ -161,149 +211,159 @@ No caller-supplied Docker/Compose argument is permitted.
 
 After mutation the helper must prove:
 
-- the maintenance-page container was recreated;
-- exact candidate digest is current;
-- runtime shape is unchanged;
-- HTTP health and marker pass;
-- Jenkins and Jenkins-Docker identities/restart counters are unchanged;
-- unrelated container identities are unchanged.
+- maintenance-page container recreated;
+- exact candidate digest current;
+- runtime shape unchanged;
+- HTTP health/marker pass;
+- Jenkins and Jenkins-Docker identities/restart counters unchanged;
+- unrelated container identities unchanged.
 
 ### R — rollback
 
-Rollback is recovery for the exact consumed pilot, not a general second deployment mechanism.
+Rollback is recovery for the exact consumed pilot, not a general deployment path.
 
 It is allowed only when:
 
-- the pilot consumed marker exists;
-- the exact candidate digest is current;
-- the exact rollback image remains local Linux/ARM64;
+- pilot consumed marker exists;
+- exact candidate digest is current;
+- exact rollback image remains local Linux/ARM64;
 - execution policy and enable file remain valid for the same pilot.
 
-The existing helper already enforces these core conditions and uses the same one-service Compose command class with the policy-pinned rollback digest.
-
-After rollback it must prove exact rollback digest, runtime shape, health and protected-state invariants.
+The existing helper already enforces these central rollback conditions and uses the same one-service Compose command class with the policy-pinned rollback digest.
 
 ### X — disarmed / terminal
 
 Execution activation must not remain indefinitely after a successful pilot.
 
-A reviewed literal command:
+The literal command:
 
 `disarm maintenance-page`
 
-must remove only the transient execution activation after one of these outcomes:
+may run only after:
 
 - deployment success and final Jenkins assertions pass; or
 - deployment failure followed by proven rollback success.
 
-The disarm helper must remove the enable file atomically and leave no general deployment path usable.
+Disarm removes the transient enable file. With the enable file absent, the authority gate cannot execute deploy or rollback even if the terminal execution policy remains active.
 
-For the first pilot it may leave the execution policy as a terminal record, because the current candidate is no longer the old rollback baseline after successful deployment. A later version update must create a new policy/pilot with the newly running image as the new rollback identity.
+A later version update requires a new pilot policy in which the then-current image becomes the new rollback baseline.
 
-If deployment and rollback both fail, Jenkins must **not** automatically disarm and thereby destroy the reviewed recovery path. The job must fail loudly and preserve state for manual recovery.
+If deployment and rollback both fail, Jenkins must not automatically destroy the reviewed recovery state. It must fail loudly for manual recovery.
 
-## Jenkins approval boundary
+## Jenkins approval pipeline
 
-The Jenkins Pipeline must use the installed `pipeline-input-step` capability.
+The installed Jenkins plugins already prove availability of:
 
-The approval stage must:
+- `pipeline-input-step`
+- `credentials-binding`
+- `ssh-credentials`
+- `workflow-cps`
+- `workflow-job`
+- `workflow-basic-steps`
 
-- occur only after the first inspection artifact has passed all assertions;
-- display the exact service, pilot ID, current digest, candidate digest, rollback digest and health state;
-- use `submitter: 'james'` for the first pilot;
-- make no host-side execution change before approval;
-- immediately repeat inspection after approval and require the critical identity fields to be unchanged before arming.
+The Stage 5 Pipeline must:
 
-Human approval is a Jenkins workflow boundary. The host wrapper does not attempt to implement an interactive approval prompt.
+1. checkout reviewed source;
+2. bind only `homelab-stage5-testserver-inspector`;
+3. run and parse pre-approval inspection;
+4. independently assert exact pilot/service/authority/current/candidate/rollback/health/protected-state fields;
+5. display those identities in the approval message;
+6. block on `input(..., submitter: 'james')`;
+7. bind the inspection credential again and repeat inspection;
+8. require all critical fields to be unchanged;
+9. only then bind `homelab-stage5-testserver-executor`;
+10. arm the exact pilot;
+11. deploy the exact pilot;
+12. parse and assert the deployment result;
+13. disarm on proven success;
+14. archive inspection, arm, deployment and final-state artifacts.
 
-The Stage 5 SSH key remains source-restricted to Jenkins `172.30.255.250`, and the TestServer host key remains strictly pinned in Jenkins.
+The executor credential must never be in scope during the pre-approval stages.
 
-## Execution-capable forced-command wrapper
+## Executor forced-command wrapper
 
-The reviewed execution wrapper must remain literal and allow-list only:
-
-- `ping`
-- `inspect maintenance-page`
-- `arm maintenance-page`
-- `deploy maintenance-page`
-- `rollback maintenance-page`
-- `disarm maintenance-page`
-
-Everything else must return non-zero.
-
-The wrapper must not parse or forward arbitrary arguments.
-
-Each privileged action must map to one exact sudo command. Jenkins receives no direct sudo command, no shell and no Docker access.
-
-## Sudo boundary
-
-The final pilot sudoers entry may authorize only exact reviewed binaries/actions such as:
+`/usr/local/sbin/homelab-stage5-executor-ssh` must map only exact literals:
 
 ```text
-/usr/local/libexec/homelab-stage5-maintenance-page-authority-gate inspect
+ping
+arm maintenance-page
+deploy maintenance-page
+rollback maintenance-page
+disarm maintenance-page
+```
+
+Everything else returns non-zero.
+
+The wrapper must not parse or forward arbitrary arguments and must not call Docker directly.
+
+## Executor sudo boundary
+
+The executor sudoers entry may authorize only exact reviewed actions:
+
+```text
 /usr/local/libexec/homelab-stage5-maintenance-page-transition arm
 /usr/local/libexec/homelab-stage5-maintenance-page-authority-gate deploy
 /usr/local/libexec/homelab-stage5-maintenance-page-authority-gate rollback
 /usr/local/libexec/homelab-stage5-maintenance-page-transition disarm
 ```
 
-No wildcard command line, shell, Docker executable or Compose executable may appear in the Stage 5 account sudo authority.
+No wildcard command line, shell, Docker executable or Compose executable may appear in executor sudo authority.
+
+The inspection account keeps its existing inspection-only sudoers entry unchanged.
 
 ## Policy transition model
 
-Do not edit policy fields in place from unreviewed input.
+Do not edit policy fields from caller input.
 
-The recommended first-pilot model is two exact root-owned files:
+Use two exact root-owned files:
 
 - active inspection policy: `/etc/homelab-stage5/maintenance-page.policy.json`;
 - staged execution policy: `/etc/homelab-stage5/maintenance-page.execution-policy.json`.
 
-The transition helper must pin both expected SHA256 values and copy/rename only the exact reviewed staged execution policy into the active path.
+The transition helper pins both expected SHA256 values and copies only the exact reviewed staged execution policy into the active path.
 
 The execution policy must contain:
 
 - `mode=execution-enabled`;
-- same immutable pilot ID;
-- same service/host/project/Compose path;
+- same pilot ID/service/host/project/Compose path;
 - same exact docker-env authority commit and checkout;
 - same configuration hashes;
 - same candidate and rollback immutable digests;
-- exact authority gate/helper/inspector/transition hashes;
+- exact authority gate/helper/inspector hashes;
+- exact implementation commit;
 - `inspection.allowed=true`;
 - `deployment.allowed=true`;
 - `deployment.performed=false`;
 - `deploy_command_enabled=true`;
 - `rollback_command_enabled=true`.
 
-The enable file provides the second independent activation condition and must contain only the exact policy pilot ID.
+The enable file is the independent host-side activation condition and contains only the exact pilot ID.
 
 ## Jenkins failure handling
 
-The Pipeline must distinguish failure phases.
+### Before arm
 
-### Failure before arm
-
-No deployment authority has been activated. Fail the build. No rollback command is needed.
+Fail build. No deployment state has changed.
 
 ### Arm failure
 
-No deployment may be attempted. Fail the build and verify enable/policy state.
+Do not deploy. Verify active policy/enable state and fail.
 
 ### Deploy success
 
-Parse and assert the deployment artifact, run final health/invariant checks, archive artifacts, then disarm.
+Assert deployment artifact and final invariants, archive evidence, then disarm.
 
 ### Deploy failure
 
-Attempt rollback only if the host-side rollback preconditions can be satisfied by the reviewed helper. Capture both deployment and rollback output.
+Attempt rollback only through the reviewed executor path and only if the helper's rollback preconditions are satisfied.
 
-If rollback succeeds, verify rollback identity/health and disarm.
+If rollback succeeds, verify rollback identity/health, archive evidence, then disarm.
 
-If rollback fails, do not improvise with Docker commands and do not automatically destroy the activation state. Fail the build for manual recovery.
+If rollback fails, do not run improvised Docker commands and do not automatically disarm. Fail for manual recovery.
 
 ## Permanent exclusions
 
-The first Stage 5 execution pilot must continue to exclude:
+The first execution pilot continues to exclude:
 
 - Jenkins controller self-deployment;
 - Jenkins-Docker/DinD mutation;
@@ -322,35 +382,41 @@ Jenkins remains a permanent self-deployment exception.
 
 ## Required proof order before live deployment
 
-1. Source-only execution-transition branch reviewed.
-2. Static validator proves wrapper and transition helpers contain no arbitrary shell/argument forwarding.
-3. Exact hashes pinned into the staged execution policy.
-4. Host installation rehearsal from a clean exact Git checkout.
-5. Install execution components while remaining in I1; prove current inspection path still passes and deploy/rollback/arm are still unreachable.
-6. Jenkins source-only Pipeline review with `input` approval and second inspection drift check.
-7. Negative proof before approval: arm/deploy/rollback rejected.
-8. Human approval in Jenkins.
-9. Arm exact pilot.
-10. Execute exactly one maintenance-page deployment.
-11. Verify exact candidate, health and protected-state invariants.
-12. Disarm immediately after proven success.
-13. Archive evidence and document result.
-14. If required, prove exact rollback path under the same consumed pilot.
+1. Source-only execution-transition design reviewed.
+2. Add transition helper, executor wrapper, execution policy template and static validator on the source-only branch.
+3. Static validator proves no arbitrary argument/shell/Docker authority leaks through wrappers.
+4. Pin exact reviewed hashes.
+5. Host installation rehearsal from a clean exact Git checkout.
+6. Stage execution components while active policy remains inspection-only; prove existing inspection path still passes and no container changes.
+7. Create dedicated executor account/key/Jenkins credential and prove its SSH/source/forced-command restrictions.
+8. Add source-only Jenkins approval pipeline and validate the executor credential is not in scope before `input`.
+9. Negative proof using inspection identity: arm/deploy/rollback/disarm remain rejected.
+10. Human approval in Jenkins.
+11. Repeat read-only inspection and drift comparison.
+12. Bind executor credential.
+13. Arm exact pilot.
+14. Execute exactly one maintenance-page deployment.
+15. Verify exact candidate, health and protected-state invariants.
+16. Disarm after proven success.
+17. Archive evidence and document result.
+18. If required, prove exact rollback under the same consumed pilot.
 
 ## Current status
 
-This document changes source documentation only.
+This branch is source-only.
 
-No host file is installed or modified by this commit.
+No host file has been installed or modified by this design.
 
-No sudo authority is changed.
+No account or Jenkins credential has been created.
 
-No Jenkins job is changed.
+No sudo authority has changed.
 
-No enable file is created.
+No Jenkins job has changed.
 
-No policy is activated.
+No enable file has been created.
 
-No container is changed.
+No policy has been activated.
 
-No Stage 5 deployment is performed.
+No container has changed.
+
+No Stage 5 deployment has been performed.
