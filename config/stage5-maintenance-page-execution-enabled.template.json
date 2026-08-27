@@ -30,8 +30,6 @@
     "authority_gate_sha256": "REPLACE_AFTER_REVIEW",
     "helper_sha256": "REPLACE_AFTER_REVIEW",
     "inspector_sha256": "REPLACE_AFTER_REVIEW",
-    "transition_sha256": "REPLACE_AFTER_REVIEW",
-    "executor_wrapper_sha256": "REPLACE_AFTER_REVIEW",
     "implementation_commit": "REPLACE_AFTER_REVIEW"
   },
   "inspection": {
