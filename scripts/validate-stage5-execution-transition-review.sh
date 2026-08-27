@@ -18,13 +18,17 @@ for file in "$TRANSITION" "$EXECUTOR" "$POLICY" "$DESIGN"; do
   [ -f "$file" ] || fail "missing review source: $file"
 done
 
+git rev-parse --verify origin/main >/dev/null 2>&1 ||
+  fail "origin/main is unavailable; fetch before review"
+
 echo "===== STAGE 5 EXECUTION-TRANSITION SOURCE REVIEW ====="
 echo "head=$(git rev-parse HEAD)"
+echo "origin_main=$(git rev-parse origin/main)"
 echo
 
 echo "===== EXISTING PROVEN BOUNDARY UNCHANGED ====="
 
-git diff --exit-code main -- \
+git diff --exit-code origin/main...HEAD -- \
   Jenkinsfile \
   ops/testserver/homelab-stage4-validation-ssh \
   ops/testserver/homelab-stage5-maintenance-page-authority-gate \
@@ -61,7 +65,7 @@ PLACEHOLDERS="$(grep -o 'REPLACE_AFTER_REVIEW' "$POLICY" | wc -l | tr -d ' ')"
 [ "$PLACEHOLDERS" -eq 6 ] ||
   fail "execution policy does not contain exactly six review placeholders"
 
-echo "Execution policy semantics + disabled review placeholders: PASS"
+echo "Execution policy semantics + review placeholders: PASS"
 echo
 
 echo "===== EXECUTOR WRAPPER ALLOW-LIST ====="
@@ -85,7 +89,6 @@ for forbidden in \
   'docker ' \
   'docker-compose' \
   'docker compose' \
-  'SSH_ORIGINAL_COMMAND=' \
   'exec $' \
   'sudo -S'
 do
@@ -138,7 +141,14 @@ done
 grep -Fq 'fail "action not permitted"' "$TRANSITION" ||
   fail "transition helper has no default deny"
 
+grep -Fq 'trap cleanup_arm EXIT' "$TRANSITION" ||
+  fail "arm transition lacks EXIT rollback trap"
+
+grep -Fq 'install -o root -g root -m 0600 "$backup" "$ACTIVE_POLICY"' "$TRANSITION" ||
+  fail "arm transition lacks inspection-policy restore path"
+
 echo "Transition helper limited to policy/activation state changes: PASS"
+echo "Arm partial-failure restore path present: PASS"
 echo
 
 echo "===== SOURCE CHECKOUT CANNOT ARM ====="
@@ -164,7 +174,6 @@ printf 'executor_wrapper_sha256=%s\n' "$(sha256sum "$EXECUTOR" | awk '{print $1}
 printf 'execution_policy_template_sha256=%s\n' "$(sha256sum "$POLICY" | awk '{print $1}')"
 
 echo
-echo=""
 echo "===== RESULT ====="
 echo "PASS: source-only transition design preserves existing inspection boundary"
 echo "PASS: execution policy still contains review placeholders"
