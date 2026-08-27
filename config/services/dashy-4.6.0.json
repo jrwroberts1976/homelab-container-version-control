@@ -6,25 +6,20 @@
     "name": "dashy",
     "container": "dashy",
     "host": "TestServer",
+    "image_type": "registry-image",
     "risk_class": "low",
     "compose": {
       "project": "dashboards",
       "service": "dashy",
       "project_directory": "/home/james/docker/stacks/dashboards",
-      "compose_file": "/home/james/docker/stacks/dashboards/docker-compose.yml"
+      "compose_file": "/home/james/docker/stacks/dashboards/docker-compose.yml",
+      "image_variable": "DASHY_IMAGE"
     }
   },
   "authority": {
     "repository": "docker-env",
     "revision": "b8058c667cac59dc741587f0554437ee000f6486",
-    "compose_sha256": "ffda0a4e3a42c350535dd1f0ed81a8326a5b1456f0d76f0570ef116465339c56",
-    "runtime_files": [
-      {
-        "path": "/home/james/docker/data/dashboards/dashy/conf.yml",
-        "role": "dashy-config",
-        "sha256": "03d8e2c988c949ae298b2ea76867759d359b5272a14e4b1f1bef33f2e71a96aa"
-      }
-    ]
+    "compose_sha256": "ffda0a4e3a42c350535dd1f0ed81a8326a5b1456f0d76f0570ef116465339c56"
   },
   "versions": {
     "scheme": "semver",
@@ -95,12 +90,14 @@
     "compare": [
       "container_id",
       "restart_count"
-    ]
+    ],
+    "all_other_containers_unchanged": true
   },
   "execution": {
     "human_approval_required": true,
     "post_approval_reinspection_required": true,
     "one_shot_required": true,
+    "candidate_acquisition": "separate-reviewed-step",
     "candidate_must_be_local_before_arm": true,
     "deployment_pull_allowed": false,
     "rollback_required": true,
