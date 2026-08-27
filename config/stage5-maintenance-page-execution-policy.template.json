@@ -27,6 +27,7 @@
     "health_marker": "Planned Maintenance | James Roberts"
   },
   "implementation": {
+    "authority_gate_sha256": "REPLACE_AFTER_REVIEW",
     "helper_sha256": "REPLACE_AFTER_REVIEW",
     "implementation_commit": "REPLACE_AFTER_REVIEW"
   },
