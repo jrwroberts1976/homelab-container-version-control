@@ -1,0 +1,695 @@
+pipeline {
+  agent any
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  environment {
+    STAGE6_HOST = '172.30.255.249'
+    STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
+    STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+
+    STAGE6_SERVICE = 'dashy'
+    STAGE6_UPDATE_ID = 'stage6-dashy-40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59'
+    STAGE6_CORE_SOURCE_COMMIT = '868062eef746f0418a53be7370ca539444d67454'
+
+    STAGE6_AUTHORITY_COMMIT = 'f659d556365e47288fc99aeb74a1a5a78c2f1852'
+    STAGE6_COMPOSE_SHA256 = '54d18c2d78fb80d04649271d5422cb886777f9b8ed5d4ef41d50217462876010'
+
+    STAGE6_ROLLBACK_VERSION = '4.5.13'
+    STAGE6_ROLLBACK_REF = 'lissy93/dashy@sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4'
+    STAGE6_ROLLBACK_IMAGE_ID = 'sha256:417b161fc4c22a4dc6759110f6794c880c72a91e4b8c64e1d653605c2726b3ee'
+
+    STAGE6_CANDIDATE_VERSION = '4.6.0'
+    STAGE6_CANDIDATE_REF = 'lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59'
+    STAGE6_CANDIDATE_IMAGE_ID = 'sha256:f7c93e5961154c8ee4a4bce7f4448d30b9ee46def5ed8eb3ebef3d111370de99'
+    STAGE6_CANDIDATE_PLATFORM_MANIFEST = 'sha256:cb6a9839b13481e8f96104482fed6e30f7aba186fa636a43a14cb2cb31b72e92'
+    STAGE6_CANDIDATE_REVISION = 'd707730b454a35c52187e824879386e1eb30f869'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Source and host-key preflight') {
+      steps {
+        sh '''
+          set -eu
+          set +x
+
+          test -f ops/testserver/homelab-stage6-inspect
+          test -f ops/testserver/homelab-stage6-inspector-ssh
+          test -f ops/testserver/homelab-stage6-transition
+          test -f ops/testserver/homelab-stage6-execute
+          test -f ops/testserver/homelab-stage6-executor-ssh
+          test -f scripts/validate-stage6-service-manifest.py
+          test -f config/services/dashy-4.6.0.json
+          test -s "$STAGE6_KNOWN_HOSTS"
+
+          git merge-base --is-ancestor "$STAGE6_CORE_SOURCE_COMMIT" HEAD
+
+          git diff --quiet "$STAGE6_CORE_SOURCE_COMMIT" -- \
+            ops/testserver/homelab-stage6-inspect \
+            ops/testserver/homelab-stage6-inspector-ssh \
+            ops/testserver/homelab-stage6-transition \
+            ops/testserver/homelab-stage6-execute \
+            ops/testserver/homelab-stage6-executor-ssh \
+            scripts/validate-stage6-service-manifest.py \
+            config/services/dashy-4.6.0.json
+
+          grep -F -- '"revision": "f659d556365e47288fc99aeb74a1a5a78c2f1852"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"compose_sha256": "54d18c2d78fb80d04649271d5422cb886777f9b8ed5d4ef41d50217462876010"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"version": "4.5.13"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"immutable_ref": "lissy93/dashy@sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"version": "4.6.0"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"immutable_ref": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"config_digest": "sha256:f7c93e5961154c8ee4a4bce7f4448d30b9ee46def5ed8eb3ebef3d111370de99"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"platform_manifest_digest": "sha256:cb6a9839b13481e8f96104482fed6e30f7aba186fa636a43a14cb2cb31b72e92"' \
+            config/services/dashy-4.6.0.json >/dev/null
+          grep -F -- '"revision": "d707730b454a35c52187e824879386e1eb30f869"' \
+            config/services/dashy-4.6.0.json >/dev/null
+
+          ssh-keygen \
+            -lf "$STAGE6_KNOWN_HOSTS" \
+            -E sha256 |
+          awk '{print $2}' |
+          grep -Fx "$STAGE6_HOSTKEY_FINGERPRINT" \
+            >/dev/null
+
+          install -d -m 0700 artifacts
+          rm -f artifacts/stage6-dashy-*.json artifacts/stage6-dashy-*.txt
+
+          echo "PASS: reviewed Stage 6 source dependencies and TestServer host key pinned"
+        '''
+      }
+    }
+
+    stage('Pre-approval inspection') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-inspector',
+            keyFileVariable: 'STAGE6_INSPECT_KEY',
+            usernameVariable: 'STAGE6_INSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_INSPECT_USER" = "homelab-stage6-inspector" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_INSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_INSPECT_USER@$STAGE6_HOST" \
+              "inspect dashy" \
+              </dev/null \
+              > artifacts/stage6-dashy-inspection-before-approval.json
+
+            test -s artifacts/stage6-dashy-inspection-before-approval.json
+          '''
+        }
+      }
+    }
+
+    stage('Assert pre-approval artifact') {
+      steps {
+        script {
+          def raw = readFile('artifacts/stage6-dashy-inspection-before-approval.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'service-update-inspection' ||
+              a.mode != 'stage6-preapproval-inspect' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.host != 'TestServer' ||
+              a.result != 'ready-for-human-review') {
+            error('Unexpected Stage 6 pre-approval inspection identity')
+          }
+
+          if (a.authority?.revision != env.STAGE6_AUTHORITY_COMMIT ||
+              a.authority?.compose_sha256 != env.STAGE6_COMPOSE_SHA256 ||
+              a.authority?.live_matches_authority != true ||
+              a.authority?.checkout_clean != true) {
+            error('Stage 6 authority gate failed')
+          }
+
+          if (a.current?.state != 'rollback' ||
+              a.current?.configured_image != 'lissy93/dashy:4.5.13') {
+            error('Dashy current state is not the reviewed rollback baseline')
+          }
+
+          if (a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+              a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.rollback?.local_image_id != env.STAGE6_ROLLBACK_IMAGE_ID ||
+              a.rollback?.platform != 'linux/arm64' ||
+              a.rollback?.local != true) {
+            error('Stage 6 rollback identity/local ARM64 gate failed')
+          }
+
+          if (a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+              a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.candidate?.local_image_id != env.STAGE6_CANDIDATE_IMAGE_ID ||
+              a.candidate?.platform_manifest_digest != env.STAGE6_CANDIDATE_PLATFORM_MANIFEST ||
+              a.candidate?.revision != env.STAGE6_CANDIDATE_REVISION ||
+              a.candidate?.platform != 'linux/arm64' ||
+              a.candidate?.local != true) {
+            error('Stage 6 candidate identity/local ARM64 gate failed')
+          }
+
+          if (a.runtime?.invariants != 'pass' ||
+              a.runtime?.health_strategy != 'docker-health' ||
+              a.runtime?.health_result != 'healthy') {
+            error('Stage 6 runtime/health gate failed')
+          }
+
+          if (a.approval?.required != true ||
+              a.approval?.granted != false ||
+              a.deployment?.allowed != false ||
+              a.deployment?.performed != false) {
+            error('Pre-approval authority state is not fail-closed')
+          }
+
+          def critical = [
+            schema_version: a.schema_version,
+            artifact: a.artifact,
+            mode: a.mode,
+            service: a.service,
+            host: a.host,
+            manifest_sha256: a.manifest_sha256,
+            implementation: a.implementation,
+            authority: a.authority,
+            current: a.current,
+            rollback: a.rollback,
+            candidate: a.candidate,
+            runtime: a.runtime,
+            protected_state: a.protected_state,
+            container_state: a.container_state,
+            approval: a.approval,
+            deployment: a.deployment,
+            result: a.result
+          ]
+
+          writeFile(
+            file: 'artifacts/stage6-dashy-critical-before-approval.json',
+            text: groovy.json.JsonOutput.prettyPrint(
+              groovy.json.JsonOutput.toJson(critical)
+            ) + '\n'
+          )
+
+          echo('PASS: exact Stage 6 Dashy identities and deployment=false proven before approval')
+        }
+      }
+    }
+
+    stage('Human approval') {
+      steps {
+        script {
+          timeout(time: 60, unit: 'MINUTES') {
+            def approver = input(
+              message: "Approve Stage 6 Dashy deployment?\n\n" +
+                       "Update ID: ${env.STAGE6_UPDATE_ID}\n" +
+                       "Current/Rollback: ${env.STAGE6_ROLLBACK_REF}\n" +
+                       "Candidate: ${env.STAGE6_CANDIDATE_REF}\n" +
+                       "No executor credential is bound until after a second read-only inspection proves zero drift.",
+              ok: 'Approve exact Dashy deployment',
+              submitter: 'james',
+              submitterParameter: 'APPROVED_BY'
+            )
+
+            env.STAGE6_APPROVED_BY = approver.toString()
+          }
+
+          if (env.STAGE6_APPROVED_BY != 'james') {
+            error('Stage 6 approval was not granted by the expected approver')
+          }
+
+          writeFile(
+            file: 'artifacts/stage6-dashy-approval.txt',
+            text: "approved_by=${env.STAGE6_APPROVED_BY}\nupdate_id=${env.STAGE6_UPDATE_ID}\n"
+          )
+
+          echo("PASS: Stage 6 human approval granted by ${env.STAGE6_APPROVED_BY}")
+        }
+      }
+    }
+
+    stage('Re-inspect after approval') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-inspector',
+            keyFileVariable: 'STAGE6_REINSPECT_KEY',
+            usernameVariable: 'STAGE6_REINSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_REINSPECT_USER" = "homelab-stage6-inspector" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_REINSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_REINSPECT_USER@$STAGE6_HOST" \
+              "inspect dashy" \
+              </dev/null \
+              > artifacts/stage6-dashy-inspection-after-approval.json
+
+            test -s artifacts/stage6-dashy-inspection-after-approval.json
+          '''
+        }
+      }
+    }
+
+    stage('Assert zero drift after approval') {
+      steps {
+        script {
+          def beforeRaw = readFile('artifacts/stage6-dashy-critical-before-approval.json')
+          def before = new groovy.json.JsonSlurperClassic().parseText(beforeRaw)
+          def raw = readFile('artifacts/stage6-dashy-inspection-after-approval.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'service-update-inspection' ||
+              a.mode != 'stage6-preapproval-inspect' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.host != 'TestServer' ||
+              a.result != 'ready-for-human-review') {
+            error('Post-approval inspection identity changed')
+          }
+
+          if (a.approval?.required != true ||
+              a.approval?.granted != false ||
+              a.deployment?.allowed != false ||
+              a.deployment?.performed != false) {
+            error('Deployment authority appeared before executor binding')
+          }
+
+          def after = [
+            schema_version: a.schema_version,
+            artifact: a.artifact,
+            mode: a.mode,
+            service: a.service,
+            host: a.host,
+            manifest_sha256: a.manifest_sha256,
+            implementation: a.implementation,
+            authority: a.authority,
+            current: a.current,
+            rollback: a.rollback,
+            candidate: a.candidate,
+            runtime: a.runtime,
+            protected_state: a.protected_state,
+            container_state: a.container_state,
+            approval: a.approval,
+            deployment: a.deployment,
+            result: a.result
+          ]
+
+          writeFile(
+            file: 'artifacts/stage6-dashy-critical-after-approval.json',
+            text: groovy.json.JsonOutput.prettyPrint(
+              groovy.json.JsonOutput.toJson(after)
+            ) + '\n'
+          )
+
+          if (before != after) {
+            error('Critical Stage 6 state drifted between inspection and approval')
+          }
+
+          echo('PASS: second Stage 6 inspection exactly matches pre-approval critical state')
+        }
+      }
+    }
+
+    stage('Executor preflight after approval') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_EXECUTOR_PING_KEY',
+            usernameVariable: 'STAGE6_EXECUTOR_PING_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_EXECUTOR_PING_USER" = "homelab-stage6-executor" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_EXECUTOR_PING_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_EXECUTOR_PING_USER@$STAGE6_HOST" \
+              ping \
+              </dev/null \
+              > artifacts/stage6-dashy-executor-ping.txt
+
+            grep -Fx 'pong' artifacts/stage6-dashy-executor-ping.txt >/dev/null
+          '''
+        }
+
+        echo('PASS: executor credential reachable only after approval and zero-drift reinspection')
+      }
+    }
+
+    stage('Arm exact update') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_ARM_KEY',
+            usernameVariable: 'STAGE6_ARM_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_ARM_USER" = "homelab-stage6-executor" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_ARM_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_ARM_USER@$STAGE6_HOST" \
+              "arm dashy" \
+              </dev/null \
+              > artifacts/stage6-dashy-arm.json
+
+            test -s artifacts/stage6-dashy-arm.json
+          '''
+        }
+
+        script {
+          def raw = readFile('artifacts/stage6-dashy-arm.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-transition' ||
+              a.action != 'arm' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.update_id != env.STAGE6_UPDATE_ID ||
+              a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+              a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+              a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.container_mutation_performed != false ||
+              a.deployment_authority != true ||
+              a.result != 'armed') {
+            error('Stage 6 arm artifact failed exact assertions')
+          }
+
+          echo('PASS: exact Stage 6 Dashy update armed after approval and zero-drift recheck')
+        }
+      }
+    }
+
+    stage('Deploy exact candidate') {
+      steps {
+        script {
+          int rc = 99
+
+          withCredentials([
+            sshUserPrivateKey(
+              credentialsId: 'homelab-stage6-testserver-executor',
+              keyFileVariable: 'STAGE6_DEPLOY_KEY',
+              usernameVariable: 'STAGE6_DEPLOY_USER'
+            )
+          ]) {
+            rc = sh(
+              returnStatus: true,
+              script: '''
+                set +x
+
+                [ "$STAGE6_DEPLOY_USER" = "homelab-stage6-executor" ] || exit 97
+
+                ssh \
+                  -n \
+                  -i "$STAGE6_DEPLOY_KEY" \
+                  -o IdentitiesOnly=yes \
+                  -o BatchMode=yes \
+                  -o PasswordAuthentication=no \
+                  -o KbdInteractiveAuthentication=no \
+                  -o ConnectTimeout=10 \
+                  -o StrictHostKeyChecking=yes \
+                  -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+                  "$STAGE6_DEPLOY_USER@$STAGE6_HOST" \
+                  "deploy dashy" \
+                  </dev/null \
+                  > artifacts/stage6-dashy-deploy.json \
+                  2> artifacts/stage6-dashy-deploy-error.txt
+              '''
+            )
+          }
+
+          env.STAGE6_DEPLOY_RC = rc.toString()
+
+          if (rc == 0) {
+            def raw = readFile('artifacts/stage6-dashy-deploy.json')
+            def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+            if (a.schema_version != 1 ||
+                a.artifact != 'stage6-execution-result' ||
+                a.action != 'deploy' ||
+                a.service != env.STAGE6_SERVICE ||
+                a.update_id != env.STAGE6_UPDATE_ID ||
+                a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+                a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+                a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+                a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+                a.health_result != 'healthy' ||
+                a.container_mutation_performed != true ||
+                a.unrelated_containers_unchanged != true ||
+                a.consumed != true ||
+                a.deployment_authority_remains_armed != true ||
+                a.result != 'deployed') {
+              error('Stage 6 deploy artifact failed exact assertions')
+            }
+
+            if (!(a.target?.container_id_before instanceof String) ||
+                !(a.target?.container_id_after instanceof String) ||
+                a.target.container_id_before == a.target.container_id_after) {
+              error('Stage 6 deploy target container identity did not change as expected')
+            }
+
+            echo('PASS: exact Dashy candidate deployed and host-side invariants passed')
+          } else {
+            echo("Stage 6 deploy command failed with rc=${rc}; reviewed rollback path will be attempted")
+          }
+        }
+      }
+    }
+
+    stage('Rollback on deploy failure') {
+      when {
+        expression {
+          return env.STAGE6_DEPLOY_RC != null && env.STAGE6_DEPLOY_RC != '0'
+        }
+      }
+      steps {
+        script {
+          int rollbackRc = 99
+
+          withCredentials([
+            sshUserPrivateKey(
+              credentialsId: 'homelab-stage6-testserver-executor',
+              keyFileVariable: 'STAGE6_ROLLBACK_KEY',
+              usernameVariable: 'STAGE6_ROLLBACK_USER'
+            )
+          ]) {
+            rollbackRc = sh(
+              returnStatus: true,
+              script: '''
+                set +x
+
+                [ "$STAGE6_ROLLBACK_USER" = "homelab-stage6-executor" ] || exit 97
+
+                ssh \
+                  -n \
+                  -i "$STAGE6_ROLLBACK_KEY" \
+                  -o IdentitiesOnly=yes \
+                  -o BatchMode=yes \
+                  -o PasswordAuthentication=no \
+                  -o KbdInteractiveAuthentication=no \
+                  -o ConnectTimeout=10 \
+                  -o StrictHostKeyChecking=yes \
+                  -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+                  "$STAGE6_ROLLBACK_USER@$STAGE6_HOST" \
+                  "rollback dashy" \
+                  </dev/null \
+                  > artifacts/stage6-dashy-rollback.json \
+                  2> artifacts/stage6-dashy-rollback-error.txt
+              '''
+            )
+          }
+
+          env.STAGE6_ROLLBACK_RC = rollbackRc.toString()
+
+          if (rollbackRc != 0) {
+            error(
+              'Stage 6 deploy failed and reviewed rollback did not succeed. ' +
+              'Execution remains armed/consumed for controlled manual recovery; no improvised Docker action is permitted.'
+            )
+          }
+
+          def raw = readFile('artifacts/stage6-dashy-rollback.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-execution-result' ||
+              a.action != 'rollback' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.update_id != env.STAGE6_UPDATE_ID ||
+              a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+              a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+              a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.health_result != 'healthy' ||
+              a.container_mutation_performed != true ||
+              a.unrelated_containers_unchanged != true ||
+              a.consumed != true ||
+              a.deployment_authority_remains_armed != true ||
+              a.result != 'rolled-back') {
+            error('Stage 6 rollback artifact failed exact assertions')
+          }
+
+          if (!(a.target?.container_id_before instanceof String) ||
+              !(a.target?.container_id_after instanceof String) ||
+              a.target.container_id_before == a.target.container_id_after) {
+            error('Stage 6 rollback target container identity did not change as expected')
+          }
+
+          echo('PASS: reviewed rollback restored exact Dashy rollback identity')
+        }
+      }
+    }
+
+    stage('Disarm terminal state') {
+      when {
+        expression {
+          return env.STAGE6_DEPLOY_RC == '0' || env.STAGE6_ROLLBACK_RC == '0'
+        }
+      }
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_DISARM_KEY',
+            usernameVariable: 'STAGE6_DISARM_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_DISARM_USER" = "homelab-stage6-executor" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_DISARM_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_DISARM_USER@$STAGE6_HOST" \
+              "disarm dashy" \
+              </dev/null \
+              > artifacts/stage6-dashy-disarm.json
+
+            test -s artifacts/stage6-dashy-disarm.json
+          '''
+        }
+
+        script {
+          def raw = readFile('artifacts/stage6-dashy-disarm.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-transition' ||
+              a.action != 'disarm' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.update_id != env.STAGE6_UPDATE_ID ||
+              a.consumed != true ||
+              a.container_mutation_performed != false ||
+              a.deployment_authority != false ||
+              a.result != 'disarmed') {
+            error('Stage 6 disarm artifact failed exact assertions')
+          }
+
+          echo('PASS: one-shot Stage 6 execution authority disarmed')
+        }
+      }
+    }
+
+    stage('Final pipeline result') {
+      steps {
+        script {
+          if (env.STAGE6_DEPLOY_RC == '0') {
+            echo('STAGE 6 DASHY RESULT: DEPLOYED EXACT CANDIDATE AND DISARMED')
+          } else if (env.STAGE6_ROLLBACK_RC == '0') {
+            currentBuild.result = 'FAILURE'
+            echo('STAGE 6 DASHY RESULT: DEPLOY FAILED, EXACT ROLLBACK RESTORED AND DISARMED')
+          } else {
+            error('Stage 6 terminal state is unresolved')
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts(
+        artifacts: 'artifacts/stage6-dashy-*',
+        allowEmptyArchive: true,
+        fingerprint: true
+      )
+    }
+  }
+}
