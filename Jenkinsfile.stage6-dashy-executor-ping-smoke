@@ -11,6 +11,7 @@ pipeline {
     STAGE6_HOST = '172.30.255.249'
     STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
     STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+    STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
     STAGE6_CORE_SOURCE_COMMIT = '16465046d67caada6c399949bc15df3be0aea6d4'
   }
 
@@ -64,9 +65,52 @@ pipeline {
 
             [ "$STAGE6_EXECUTOR_USER" = "homelab-stage6-executor" ]
 
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            chmod 0600 "$NORMALIZED_EXECUTOR_KEY"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+
+            FIRST_LINE="$(sed -n '1p' "$STAGE6_EXECUTOR_KEY")"
+            SECOND_LINE="$(sed -n '2p' "$STAGE6_EXECUTOR_KEY")"
+            KEY_NORMALIZATION=none
+
+            if [ "$FIRST_LINE" = '-----BEGIN OPENSSH PRIVATE KEY-----' ]; then
+              cp "$STAGE6_EXECUTOR_KEY" "$NORMALIZED_EXECUTOR_KEY"
+            elif [ -z "$FIRST_LINE" ] && \
+                 [ "$SECOND_LINE" = '-----BEGIN OPENSSH PRIVATE KEY-----' ]; then
+              tail -n +2 "$STAGE6_EXECUTOR_KEY" > "$NORMALIZED_EXECUTOR_KEY"
+              KEY_NORMALIZATION=removed-one-leading-blank-line
+            else
+              echo "FAIL: executor credential envelope is not accepted" >&2
+              exit 2
+            fi
+
+            CR_COUNT="$(LC_ALL=C tr -cd '\r' < "$NORMALIZED_EXECUTOR_KEY" | wc -c | tr -d ' ')"
+            [ "$CR_COUNT" -eq 0 ]
+
+            NORMALIZED_FIRST="$(sed -n '1p' "$NORMALIZED_EXECUTOR_KEY")"
+            NORMALIZED_LAST="$(awk 'NF { line=$0 } END { print line }' "$NORMALIZED_EXECUTOR_KEY")"
+
+            [ "$NORMALIZED_FIRST" = '-----BEGIN OPENSSH PRIVATE KEY-----' ]
+            [ "$NORMALIZED_LAST" = '-----END OPENSSH PRIVATE KEY-----' ]
+
+            ssh-keygen -y -f "$NORMALIZED_EXECUTOR_KEY" >/dev/null
+
+            EXECUTOR_FP="$(
+              ssh-keygen -lf "$NORMALIZED_EXECUTOR_KEY" -E sha256 |
+              awk '{print $2}'
+            )"
+
+            [ "$EXECUTOR_FP" = "$STAGE6_EXECUTOR_FINGERPRINT" ]
+
+            printf '%s\n' \
+              "credential_normalization=$KEY_NORMALIZATION" \
+              "executor_fingerprint=$EXECUTOR_FP" \
+              'private_key_contents_displayed=false' \
+              > artifacts/stage6-executor-ping-key-validation.txt
+
             ssh \
               -n \
-              -i "$STAGE6_EXECUTOR_KEY" \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
               -o IdentitiesOnly=yes \
               -o BatchMode=yes \
               -o PasswordAuthentication=no \
@@ -90,7 +134,7 @@ pipeline {
               'mutation_performed=false' \
               > artifacts/stage6-executor-ping-validated.txt
 
-            echo "PASS: Jenkins Stage 6 executor credential completed forced-command ping only"
+            echo "PASS: Jenkins Stage 6 executor credential normalized, fingerprinted and completed forced-command ping only"
           '''
         }
       }
