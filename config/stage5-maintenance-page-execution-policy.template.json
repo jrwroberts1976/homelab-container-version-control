@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "mode": "execution-template-disabled",
+  "mode": "inspection-ready",
   "pilot_id": "stage5-maintenance-page-nginx-1.31.4-20260827",
   "service": "maintenance-page",
   "host": "TestServer",
@@ -29,7 +29,12 @@
   "implementation": {
     "authority_gate_sha256": "REPLACE_AFTER_REVIEW",
     "helper_sha256": "REPLACE_AFTER_REVIEW",
+    "inspector_sha256": "REPLACE_AFTER_REVIEW",
     "implementation_commit": "REPLACE_AFTER_REVIEW"
+  },
+  "inspection": {
+    "allowed": true,
+    "performed": false
   },
   "deployment": {
     "allowed": false,
