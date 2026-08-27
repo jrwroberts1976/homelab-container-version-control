@@ -1,0 +1,163 @@
+pipeline {
+  agent any
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  environment {
+    STAGE6_BASE_COMMIT = '84c07e87f5257534ca5a001ce2da44030a5576d3'
+    EXPECTED_INSPECTOR_FP = 'SHA256:c8O10fpmumhlPFLxiufEHW64vstexyPHnyPIdY0Gcwk'
+    EXPECTED_EXECUTOR_FP = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Source preflight') {
+      steps {
+        sh '''
+          set -eu
+          set +x
+
+          git merge-base --is-ancestor "$STAGE6_BASE_COMMIT" HEAD
+          install -d -m 0700 artifacts
+          rm -f artifacts/stage6-bound-key-*.txt
+
+          echo "PASS: diagnostic source descends from reviewed Stage 6 baseline"
+        '''
+      }
+    }
+
+    stage('Bound credential structure diagnostic') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-inspector',
+            keyFileVariable: 'STAGE6_INSPECTOR_KEY',
+            usernameVariable: 'STAGE6_INSPECTOR_USER'
+          ),
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_EXECUTOR_KEY',
+            usernameVariable: 'STAGE6_EXECUTOR_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_INSPECTOR_USER" = "homelab-stage6-inspector" ]
+            [ "$STAGE6_EXECUTOR_USER" = "homelab-stage6-executor" ]
+
+            describe_key() {
+              NAME="$1"
+              KEY="$2"
+              EXPECTED_FP="$3"
+              OUT="artifacts/stage6-bound-key-${NAME}.txt"
+              ERR="artifacts/stage6-bound-key-${NAME}.parser.tmp"
+
+              BYTES="$(wc -c < "$KEY" | tr -d ' ')"
+              LINES="$(wc -l < "$KEY" | tr -d ' ')"
+              CR_COUNT="$(LC_ALL=C tr -cd '\r' < "$KEY" | wc -c | tr -d ' ')"
+              MODE="$(stat -c '%a' "$KEY")"
+
+              BEGIN_OK=false
+              if IFS= read -r FIRST_LINE < "$KEY"; then
+                [ "$FIRST_LINE" = '-----BEGIN OPENSSH PRIVATE KEY-----' ] && BEGIN_OK=true
+              fi
+
+              LAST_LINE="$(awk 'NF { line=$0 } END { print line }' "$KEY")"
+              END_OK=false
+              [ "$LAST_LINE" = '-----END OPENSSH PRIVATE KEY-----' ] && END_OK=true
+
+              LAST_BYTE="$(tail -c 1 "$KEY" | od -An -t u1 | tr -d ' ' || true)"
+              FINAL_NEWLINE=false
+              [ "$LAST_BYTE" = '10' ] && FINAL_NEWLINE=true
+
+              PARSE_RC=0
+              ssh-keygen -y -f "$KEY" >/dev/null 2>"$ERR" || PARSE_RC=$?
+
+              PARSE_RESULT=PASS
+              PARSE_ERROR_CLASS=none
+              FINGERPRINT=unavailable
+              FINGERPRINT_MATCH=false
+
+              if [ "$PARSE_RC" -eq 0 ]; then
+                FINGERPRINT="$(ssh-keygen -lf "$KEY" -E sha256 | awk '{print $2}')"
+                [ "$FINGERPRINT" = "$EXPECTED_FP" ] && FINGERPRINT_MATCH=true
+              else
+                PARSE_RESULT=FAIL
+                if grep -Fq 'error in libcrypto' "$ERR"; then
+                  PARSE_ERROR_CLASS=libcrypto
+                elif grep -Fq 'invalid format' "$ERR"; then
+                  PARSE_ERROR_CLASS=invalid-format
+                else
+                  PARSE_ERROR_CLASS=other
+                fi
+              fi
+
+              rm -f "$ERR"
+
+              {
+                echo "credential_role=$NAME"
+                echo "file_mode=$MODE"
+                echo "byte_count=$BYTES"
+                echo "newline_count=$LINES"
+                echo "carriage_return_count=$CR_COUNT"
+                echo "begin_marker_exact=$BEGIN_OK"
+                echo "end_marker_exact=$END_OK"
+                echo "final_newline=$FINAL_NEWLINE"
+                echo "ssh_keygen_parse=$PARSE_RESULT"
+                echo "ssh_keygen_rc=$PARSE_RC"
+                echo "parse_error_class=$PARSE_ERROR_CLASS"
+                echo "public_fingerprint=$FINGERPRINT"
+                echo "expected_fingerprint_match=$FINGERPRINT_MATCH"
+                echo "private_key_contents_displayed=false"
+              } > "$OUT"
+
+              cat "$OUT"
+            }
+
+            echo '===== INSPECTOR BOUND KEY ====='
+            describe_key inspector "$STAGE6_INSPECTOR_KEY" "$EXPECTED_INSPECTOR_FP"
+
+            echo
+            echo '===== EXECUTOR BOUND KEY ====='
+            describe_key executor "$STAGE6_EXECUTOR_KEY" "$EXPECTED_EXECUTOR_FP"
+
+            grep -Fx 'ssh_keygen_parse=PASS' artifacts/stage6-bound-key-inspector.txt >/dev/null
+            grep -Fx 'expected_fingerprint_match=true' artifacts/stage6-bound-key-inspector.txt >/dev/null
+
+            {
+              echo 'diagnostic=stage6-bound-key-structure'
+              echo 'network_activity=false'
+              echo 'remote_command_executed=false'
+              echo 'mutation_performed=false'
+              echo 'private_key_contents_displayed=false'
+            } > artifacts/stage6-bound-key-summary.txt
+
+            echo
+            echo 'PASS: safe Jenkins-bound key structural diagnostic completed'
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts(
+        artifacts: 'artifacts/stage6-bound-key-*.txt',
+        allowEmptyArchive: true,
+        fingerprint: true
+      )
+    }
+  }
+}
