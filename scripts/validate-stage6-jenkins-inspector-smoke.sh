@@ -46,9 +46,9 @@ fi
 
 echo "Inspector credential only; executor credential absent: PASS"
 
-SSH_COUNT="$(grep -Ec '^[[:space:]]+ssh \\$' "$PIPELINE")"
-SSH_N_COUNT="$(grep -Ec '^[[:space:]]+-n \\$' "$PIPELINE")"
-DEVNULL_COUNT="$(grep -Ec '^[[:space:]]+</dev/null \\$' "$PIPELINE")"
+SSH_COUNT="$(grep -Fc '            ssh \' "$PIPELINE")"
+SSH_N_COUNT="$(grep -Fc '              -n \' "$PIPELINE")"
+DEVNULL_COUNT="$(grep -Fc '              </dev/null \' "$PIPELINE")"
 
 printf 'ssh_call_count=%s\n' "$SSH_COUNT"
 printf 'ssh_n_count=%s\n' "$SSH_N_COUNT"
@@ -60,7 +60,7 @@ printf 'ssh_devnull_count=%s\n' "$DEVNULL_COUNT"
 
 echo "SSH stdin isolation: PASS"
 
-REMOTE_PING_COUNT="$(grep -Ec '^[[:space:]]+ping \\$' "$PIPELINE")"
+REMOTE_PING_COUNT="$(grep -Fc '              ping \' "$PIPELINE")"
 REMOTE_INSPECT_COUNT="$(grep -Fc '              "inspect dashy" \' "$PIPELINE")"
 
 [ "$REMOTE_PING_COUNT" -eq 1 ] || fail "literal remote ping must appear exactly once"
