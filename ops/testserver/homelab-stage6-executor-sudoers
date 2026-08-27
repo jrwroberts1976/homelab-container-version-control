@@ -1,0 +1,8 @@
+# Stage 6 Jenkins executor sudo boundary.
+# Install as /etc/sudoers.d/homelab-stage6-executor, root:root 0440.
+# The executor receives no shell, Docker, Compose, Git, editor, file-copy, or wildcard sudo authority.
+
+homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition arm dashy
+homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute deploy dashy
+homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute rollback dashy
+homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition disarm dashy

@@ -1,0 +1,1 @@
+restrict,from="172.30.255.250",command="/usr/local/sbin/homelab-stage6-executor-ssh" ssh-ed25519 __PUBLIC_KEY__ homelab-stage6-testserver-executor
