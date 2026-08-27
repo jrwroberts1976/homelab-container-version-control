@@ -23,6 +23,8 @@ SSH_COUNT="$(grep -Ec '^[[:space:]]+ssh \\$' "$PIPELINE" || true)"
 SSH_N_COUNT="$(grep -Ec '^[[:space:]]+-n \\$' "$PIPELINE" || true)"
 DEVNULL_COUNT="$(grep -Ec '^[[:space:]]+</dev/null \\$' "$PIPELINE" || true)"
 PING_COUNT="$(grep -Ec '^[[:space:]]+ping \\$' "$PIPELINE" || true)"
+NORMALIZED_IDENTITY_COUNT="$(count_fixed '-i "$NORMALIZED_EXECUTOR_KEY"')"
+RAW_IDENTITY_COUNT="$(count_fixed '-i "$STAGE6_EXECUTOR_KEY"')"
 
 echo "executor_credential_refs=$EXECUTOR_REFS"
 echo "inspector_credential_refs=$INSPECTOR_REFS"
@@ -30,6 +32,8 @@ echo "ssh_count=$SSH_COUNT"
 echo "ssh_n_count=$SSH_N_COUNT"
 echo "ssh_devnull_count=$DEVNULL_COUNT"
 echo "remote_ping_count=$PING_COUNT"
+echo "normalized_identity_count=$NORMALIZED_IDENTITY_COUNT"
+echo "raw_identity_count=$RAW_IDENTITY_COUNT"
 
 [ "$EXECUTOR_REFS" -eq 1 ] || fail "expected one executor credential reference"
 [ "$INSPECTOR_REFS" -eq 0 ] || fail "inspector credential must not be referenced"
@@ -37,6 +41,8 @@ echo "remote_ping_count=$PING_COUNT"
 [ "$SSH_N_COUNT" -eq 1 ] || fail "SSH call must use -n"
 [ "$DEVNULL_COUNT" -eq 1 ] || fail "SSH call must redirect stdin"
 [ "$PING_COUNT" -eq 1 ] || fail "expected exactly one remote ping command"
+[ "$NORMALIZED_IDENTITY_COUNT" -eq 1 ] || fail "SSH must use normalized executor key exactly once"
+[ "$RAW_IDENTITY_COUNT" -eq 0 ] || fail "raw Jenkins-bound key must never be passed to SSH"
 
 for option in \
     'IdentitiesOnly=yes' \
@@ -49,6 +55,28 @@ do
     count="$(count_fixed "$option")"
     echo "$option count=$count"
     [ "$count" -eq 1 ] || fail "SSH option count mismatch: $option"
+done
+
+for marker in \
+    "STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'" \
+    'NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"' \
+    'trap '\''rm -f "$NORMALIZED_EXECUTOR_KEY"'\'' EXIT HUP INT TERM' \
+    "[ \"\$FIRST_LINE\" = '-----BEGIN OPENSSH PRIVATE KEY-----' ]" \
+    '[ -z "$FIRST_LINE" ]' \
+    "[ \"\$SECOND_LINE\" = '-----BEGIN OPENSSH PRIVATE KEY-----' ]" \
+    'tail -n +2 "$STAGE6_EXECUTOR_KEY" > "$NORMALIZED_EXECUTOR_KEY"' \
+    'KEY_NORMALIZATION=removed-one-leading-blank-line' \
+    'CR_COUNT="$(LC_ALL=C tr -cd '\''\r'\'' < "$NORMALIZED_EXECUTOR_KEY" | wc -c | tr -d '\'' '\'')"' \
+    "[ \"\$NORMALIZED_FIRST\" = '-----BEGIN OPENSSH PRIVATE KEY-----' ]" \
+    "[ \"\$NORMALIZED_LAST\" = '-----END OPENSSH PRIVATE KEY-----' ]" \
+    'ssh-keygen -y -f "$NORMALIZED_EXECUTOR_KEY" >/dev/null' \
+    'ssh-keygen -lf "$NORMALIZED_EXECUTOR_KEY" -E sha256' \
+    '[ "$EXECUTOR_FP" = "$STAGE6_EXECUTOR_FINGERPRINT" ]' \
+    'private_key_contents_displayed=false'
+do
+    COUNT="$(count_fixed "$marker")"
+    echo "$marker count=$COUNT"
+    [ "$COUNT" -ge 1 ] || fail "required canonicalization guard missing: $marker"
 done
 
 for forbidden in \
@@ -81,4 +109,4 @@ grep -Fq -- "[ \"\$(tr -d '\\\\r\\\\n' < artifacts/stage6-executor-ping.txt)\" =
 grep -Fq -- "'mutation_performed=false'" "$PIPELINE" ||
     fail "non-mutation evidence marker missing"
 
-echo "PASS: Stage 6 executor ping smoke is credential-bound, ping-only and fail-closed"
+echo "PASS: Stage 6 executor ping smoke canonicalizes at most one leading blank line, fingerprints the key, and remains ping-only"
