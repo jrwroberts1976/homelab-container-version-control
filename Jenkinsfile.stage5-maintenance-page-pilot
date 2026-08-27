@@ -289,9 +289,8 @@ pipeline {
     stage('Assert no drift after approval') {
       steps {
         script {
-          def before = new groovy.json.JsonSlurperClassic().parseText(
-            readFile('artifacts/stage5-critical-before-approval.json')
-          )
+          def beforeRaw = readFile('artifacts/stage5-critical-before-approval.json')
+          def before = new groovy.json.JsonSlurperClassic().parseText(beforeRaw)
           def raw = readFile('artifacts/stage5-inspection-after-approval.json')
           def a = new groovy.json.JsonSlurperClassic().parseText(raw)
 
@@ -388,7 +387,8 @@ pipeline {
         }
 
         script {
-          def a = new groovy.json.JsonSlurperClassic().parseText(readFile('artifacts/stage5-arm.json'))
+          def raw = readFile('artifacts/stage5-arm.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
 
           if (a.schema_version != 1 || a.mode != 'stage5-execution-transition' ||
               a.action != 'arm' || a.pilot_id != env.STAGE5_PILOT_ID ||
@@ -439,7 +439,8 @@ pipeline {
           env.STAGE5_DEPLOY_RC = rc.toString()
 
           if (rc == 0) {
-            def a = new groovy.json.JsonSlurperClassic().parseText(readFile('artifacts/stage5-deploy.json'))
+            def raw = readFile('artifacts/stage5-deploy.json')
+            def a = new groovy.json.JsonSlurperClassic().parseText(raw)
 
             if (a.schema_version != 1 || a.mode != 'stage5-pilot' ||
                 a.action != 'deploy' || a.pilot_id != env.STAGE5_PILOT_ID ||
@@ -505,7 +506,8 @@ pipeline {
             )
           }
 
-          def a = new groovy.json.JsonSlurperClassic().parseText(readFile('artifacts/stage5-rollback.json'))
+          def raw = readFile('artifacts/stage5-rollback.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
 
           if (a.schema_version != 1 || a.mode != 'stage5-pilot' ||
               a.action != 'rollback' || a.pilot_id != env.STAGE5_PILOT_ID ||
@@ -556,7 +558,8 @@ pipeline {
         }
 
         script {
-          def a = new groovy.json.JsonSlurperClassic().parseText(readFile('artifacts/stage5-disarm.json'))
+          def raw = readFile('artifacts/stage5-disarm.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
 
           if (a.schema_version != 1 || a.mode != 'stage5-execution-transition' ||
               a.action != 'disarm' || a.pilot_id != env.STAGE5_PILOT_ID ||
