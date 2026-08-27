@@ -1,0 +1,413 @@
+#!/bin/bash
+set -u
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+SERVICE="maintenance-page"
+STACK_DIR="/home/james/docker/stacks/maintenance-page"
+COMPOSE_FILE="${STACK_DIR}/docker-compose.yml"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage5-maintenance-page-inspect"
+POLICY_FILE="/etc/homelab-stage5/maintenance-page.policy.json"
+ENABLE_FILE="/etc/homelab-stage5/maintenance-page.enable"
+
+fail() {
+  printf 'ERROR: %s\n' "$1" >&2
+  exit 2
+}
+
+policy_string() {
+  local query="$1"
+
+  jq -er \
+    "$query | strings | select(length > 0)" \
+    "$POLICY_FILE" \
+    2>/dev/null ||
+    fail "policy value unavailable: $query"
+}
+
+require_secure_root_file() {
+  local file="$1"
+
+  [ -f "$file" ] ||
+    fail "required root-owned file missing: $file"
+
+  [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+    fail "file is not root:root: $file"
+
+  if find "$file" -maxdepth 0 -perm /022 -print -quit |
+     grep -q .
+  then
+    fail "file is group/other writable: $file"
+  fi
+}
+
+require_installed_context() {
+  local self actual_sha expected_sha
+
+  [ "$(id -u)" -eq 0 ] ||
+    fail "inspection helper requires root"
+
+  self="$(readlink -f "$0")"
+
+  [ "$self" = "$INSTALLED_SELF" ] ||
+    fail "inspection helper is not running from reviewed installed path"
+
+  require_secure_root_file "$INSTALLED_SELF"
+  require_secure_root_file "$POLICY_FILE"
+
+  [ ! -e "$ENABLE_FILE" ] ||
+    fail "enable file must be absent during inspection-only phase"
+
+  actual_sha="$(sha256sum "$INSTALLED_SELF" | awk '{print $1}')"
+  expected_sha="$(policy_string '.implementation.inspector_sha256')"
+
+  [ "$actual_sha" = "$expected_sha" ] ||
+    fail "installed inspector hash does not match policy"
+}
+
+require_inspection_policy() {
+  [ "$(policy_string '.schema_version | tostring')" = "1" ] ||
+    fail "unsupported policy schema"
+
+  [ "$(policy_string '.mode')" = "inspection-ready" ] ||
+    fail "policy mode is not inspection-ready"
+
+  [ "$(policy_string '.service')" = "$SERVICE" ] ||
+    fail "policy service mismatch"
+
+  [ "$(policy_string '.host')" = "TestServer" ] ||
+    fail "policy host mismatch"
+
+  jq -e '
+    .inspection.allowed == true
+    and .inspection.performed == false
+    and .deployment.allowed == false
+    and .deployment.performed == false
+    and .deployment.deploy_command_enabled == false
+    and .deployment.rollback_command_enabled == false
+  ' "$POLICY_FILE" >/dev/null ||
+    fail "policy is not inspection-only"
+}
+
+policy_image() {
+  local key="$1"
+  local value
+
+  value="$(policy_string ".images.${key}")"
+
+  [[ "$value" =~ ^nginx@sha256:[0-9a-f]{64}$ ]] ||
+    fail "policy ${key} image is not an immutable nginx digest"
+
+  printf '%s\n' "$value"
+}
+
+rendered_image() {
+  local image_mode="$1"
+
+  if [ "$image_mode" = "default" ]; then
+    env -u MAINTENANCE_PAGE_IMAGE \
+      docker compose \
+        --project-directory "$STACK_DIR" \
+        -p "$SERVICE" \
+        -f "$COMPOSE_FILE" \
+        config |
+    awk '
+      /^  maintenance-page:/ {
+        active=1
+        next
+      }
+
+      active && /^    image:/ {
+        sub(/^    image: /, "")
+        print
+        exit
+      }
+    '
+  else
+    MAINTENANCE_PAGE_IMAGE="$image_mode" \
+      docker compose \
+        --project-directory "$STACK_DIR" \
+        -p "$SERVICE" \
+        -f "$COMPOSE_FILE" \
+        config |
+    awk '
+      /^  maintenance-page:/ {
+        active=1
+        next
+      }
+
+      active && /^    image:/ {
+        sub(/^    image: /, "")
+        print
+        exit
+      }
+    '
+  fi
+}
+
+current_digest() {
+  local image_id digest
+
+  image_id="$(docker inspect -f '{{.Image}}' "$SERVICE" 2>/dev/null)" ||
+    fail "maintenance-page container is unavailable"
+
+  digest="$(
+    docker image inspect "$image_id" \
+      --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+      2>/dev/null |
+    grep -E '^nginx@sha256:[0-9a-f]{64}$' |
+    head -1
+  )"
+
+  [ -n "$digest" ] ||
+    fail "current immutable nginx digest unavailable"
+
+  printf '%s\n' "$digest"
+}
+
+verify_image_local_arm64() {
+  local image="$1"
+  local platform
+
+  docker image inspect "$image" >/dev/null 2>&1 ||
+    fail "required immutable image is not local: $image"
+
+  platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
+
+  [ "$platform" = "linux/arm64" ] ||
+    fail "image platform is not linux/arm64: $image"
+}
+
+verify_configuration_rendering() {
+  local candidate rollback default_render rollback_render
+
+  candidate="$(policy_image candidate)"
+  rollback="$(policy_image rollback)"
+
+  [ "$candidate" != "$rollback" ] ||
+    fail "candidate and rollback identities are identical"
+
+  default_render="$(rendered_image default)"
+  rollback_render="$(rendered_image "$rollback")"
+
+  [ "$default_render" = "$candidate" ] ||
+    fail "Compose default does not resolve to policy candidate"
+
+  [ "$rollback_render" = "$rollback" ] ||
+    fail "Compose rollback override does not resolve exactly"
+}
+
+verify_runtime_shape() {
+  local expected_network expected_host_ip expected_host_port expected_container_port
+  local networks
+
+  expected_network="$(policy_string '.runtime.expected_network')"
+  expected_host_ip="$(policy_string '.runtime.expected_host_ip')"
+  expected_host_port="$(policy_string '.runtime.expected_host_port | tostring')"
+  expected_container_port="$(policy_string '.runtime.expected_container_port | tostring')"
+
+  [ "$(docker inspect -f '{{.State.Running}}' "$SERVICE" 2>/dev/null)" = "true" ] ||
+    fail "maintenance-page is not running"
+
+  [ "$(docker inspect -f '{{.HostConfig.Privileged}}' "$SERVICE")" = "false" ] ||
+    fail "maintenance-page unexpectedly privileged"
+
+  networks="$(
+    docker inspect "$SERVICE" |
+    jq -r '.[0].NetworkSettings.Networks | keys[]' |
+    sort
+  )"
+
+  [ "$networks" = "$expected_network" ] ||
+    fail "maintenance-page network membership changed"
+
+  docker inspect "$SERVICE" |
+  jq -e \
+    --arg container_port "${expected_container_port}/tcp" \
+    --arg host_ip "$expected_host_ip" \
+    --arg host_port "$expected_host_port" \
+    '.[0].NetworkSettings.Ports[$container_port]
+      | length == 1
+      and .[0].HostIp == $host_ip
+      and .[0].HostPort == $host_port' \
+    >/dev/null ||
+    fail "maintenance-page published port changed"
+
+  docker inspect "$SERVICE" |
+  jq -e '
+    .[0].Mounts as $m
+    | ($m | length) == 2
+      and any(
+        $m[];
+        .Destination == "/usr/share/nginx/html"
+        and .RW == false
+      )
+      and any(
+        $m[];
+        .Destination == "/etc/nginx/conf.d/default.conf"
+        and .RW == false
+      )' \
+    >/dev/null ||
+    fail "maintenance-page mount boundary changed"
+}
+
+verify_health() {
+  local url marker tmp code
+
+  url="$(policy_string '.runtime.health_url')"
+  marker="$(policy_string '.runtime.health_marker')"
+  tmp="$(mktemp)"
+
+  code="$(
+    curl \
+      -sS \
+      -o "$tmp" \
+      -w '%{http_code}' \
+      "$url" \
+      2>/dev/null || true
+  )"
+
+  [ "$code" = "200" ] || {
+    rm -f "$tmp"
+    fail "health endpoint did not return HTTP 200"
+  }
+
+  grep -Fq "$marker" "$tmp" || {
+    rm -f "$tmp"
+    fail "health marker missing"
+  }
+
+  rm -f "$tmp"
+}
+
+emit_inspection() {
+  local candidate rollback current configured_image
+  local candidate_id rollback_id container_id restart_count
+  local jenkins_id jenkins_restart dind_id dind_restart
+
+  candidate="$(policy_image candidate)"
+  rollback="$(policy_image rollback)"
+  current="$(current_digest)"
+
+  [ "$current" = "$rollback" ] ||
+    fail "pre-approval inspection requires rollback digest to be current"
+
+  verify_image_local_arm64 "$candidate"
+  verify_image_local_arm64 "$rollback"
+  verify_configuration_rendering
+  verify_runtime_shape
+  verify_health
+
+  configured_image="$(docker inspect -f '{{.Config.Image}}' "$SERVICE")"
+  candidate_id="$(docker image inspect "$candidate" --format '{{.Id}}')"
+  rollback_id="$(docker image inspect "$rollback" --format '{{.Id}}')"
+  container_id="$(docker inspect -f '{{.Id}}' "$SERVICE")"
+  restart_count="$(docker inspect -f '{{.RestartCount}}' "$SERVICE")"
+
+  jenkins_id="$(docker inspect -f '{{.Id}}' jenkins)" ||
+    fail "Jenkins baseline unavailable"
+  jenkins_restart="$(docker inspect -f '{{.RestartCount}}' jenkins)" ||
+    fail "Jenkins restart baseline unavailable"
+  dind_id="$(docker inspect -f '{{.Id}}' jenkins-docker)" ||
+    fail "Jenkins DinD baseline unavailable"
+  dind_restart="$(docker inspect -f '{{.RestartCount}}' jenkins-docker)" ||
+    fail "Jenkins DinD restart baseline unavailable"
+
+  jq -n \
+    --arg pilot_id "$(policy_string '.pilot_id')" \
+    --arg service "$SERVICE" \
+    --arg authority_commit "$(policy_string '.docker_env_authority_commit')" \
+    --arg current "$current" \
+    --arg configured_image "$configured_image" \
+    --arg container_id "$container_id" \
+    --arg restart_count "$restart_count" \
+    --arg candidate "$candidate" \
+    --arg candidate_id "$candidate_id" \
+    --arg rollback "$rollback" \
+    --arg rollback_id "$rollback_id" \
+    --arg health_url "$(policy_string '.runtime.health_url')" \
+    --arg health_marker "$(policy_string '.runtime.health_marker')" \
+    --arg network "$(policy_string '.runtime.expected_network')" \
+    --arg host_ip "$(policy_string '.runtime.expected_host_ip')" \
+    --arg host_port "$(policy_string '.runtime.expected_host_port | tostring')" \
+    --arg jenkins_id "$jenkins_id" \
+    --arg jenkins_restart "$jenkins_restart" \
+    --arg dind_id "$dind_id" \
+    --arg dind_restart "$dind_restart" \
+    '{
+      schema_version: 1,
+      mode: "stage5-preapproval-inspect",
+      artifact: "pilot-inspection",
+      pilot_id: $pilot_id,
+      service: $service,
+      host: "TestServer",
+      authority: {
+        docker_env_commit: $authority_commit
+      },
+      current: {
+        configured_image: $configured_image,
+        immutable_digest: $current,
+        container_id: $container_id,
+        restart_count: ($restart_count | tonumber)
+      },
+      candidate: {
+        immutable_digest: $candidate,
+        image_id: $candidate_id,
+        platform: "linux/arm64",
+        local: true
+      },
+      rollback: {
+        immutable_digest: $rollback,
+        image_id: $rollback_id,
+        platform: "linux/arm64",
+        local: true
+      },
+      runtime: {
+        network: $network,
+        host_ip: $host_ip,
+        host_port: ($host_port | tonumber),
+        health_url: $health_url,
+        health_marker: $health_marker,
+        health_result: "pass"
+      },
+      protected_state: {
+        jenkins: {
+          container_id: $jenkins_id,
+          restart_count: ($jenkins_restart | tonumber)
+        },
+        jenkins_docker: {
+          container_id: $dind_id,
+          restart_count: ($dind_restart | tonumber)
+        }
+      },
+      approval: {
+        required: true,
+        granted: false
+      },
+      inspection: {
+        allowed: true,
+        performed: true
+      },
+      deployment: {
+        allowed: false,
+        performed: false,
+        deploy_command_enabled: false,
+        rollback_command_enabled: false
+      },
+      result: "ready-for-human-review"
+    }'
+}
+
+ACTION="${1:-}"
+
+case "$ACTION" in
+  inspect)
+    require_installed_context
+    require_inspection_policy
+    emit_inspection
+    ;;
+  *)
+    fail "action not permitted"
+    ;;
+esac
