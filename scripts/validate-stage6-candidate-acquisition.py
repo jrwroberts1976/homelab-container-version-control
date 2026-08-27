@@ -37,6 +37,10 @@ def main() -> int:
         '[ "$#" -eq 1 ]',
         '[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]]',
         'MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"',
+        'CANDIDATE_LOCAL_REQUIRED="$(jq -r \' .execution.candidate_must_be_local_before_arm\' "$MANIFEST")"'.replace("' .", "'."),
+        'DEPLOYMENT_PULL_ALLOWED="$(jq -r \' .execution.deployment_pull_allowed\' "$MANIFEST")"'.replace("' .", "'."),
+        '[ "$CANDIDATE_LOCAL_REQUIRED" = "true" ]',
+        '[ "$DEPLOYMENT_PULL_ALLOWED" = "false" ]',
         'docker pull "$IMMUTABLE_REF"',
         '[ "$LOCAL_ID" = "$CONFIG_DIGEST" ]',
         '[ "$BEFORE_CONTAINERS" = "$AFTER_CONTAINERS" ]',
@@ -45,6 +49,17 @@ def main() -> int:
 
     for needle in required:
         require(needle in text, f"required acquisition invariant missing: {needle}")
+
+    # jq -e returns non-zero when a valid JSON boolean is false. Boolean policy
+    # fields must therefore be read with plain -r and checked explicitly.
+    forbidden_boolean_reads = [
+        "jq -er '.execution.candidate_must_be_local_before_arm'",
+        "jq -er '.execution.deployment_pull_allowed'",
+        "jq -e -r '.execution.candidate_must_be_local_before_arm'",
+        "jq -e -r '.execution.deployment_pull_allowed'",
+    ]
+    for needle in forbidden_boolean_reads:
+        require(needle not in code_text, f"boolean policy must not use jq -e: {needle}")
 
     banned_literal = [
         "docker compose",

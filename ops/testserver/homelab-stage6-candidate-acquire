@@ -44,10 +44,12 @@ IMAGE_TYPE="$(jq -er '.service.image_type' "$MANIFEST")"
 ACQUISITION_MODE="$(jq -er '.execution.candidate_acquisition' "$MANIFEST")"
 [ "$ACQUISITION_MODE" = "separate-reviewed-step" ] || fail "candidate acquisition not allowed by manifest"
 
-CANDIDATE_LOCAL_REQUIRED="$(jq -er '.execution.candidate_must_be_local_before_arm' "$MANIFEST")"
+# jq -e exits non-zero for the valid JSON boolean false, so boolean policy
+# fields are read with -r and validated explicitly below.
+CANDIDATE_LOCAL_REQUIRED="$(jq -r '.execution.candidate_must_be_local_before_arm' "$MANIFEST")"
 [ "$CANDIDATE_LOCAL_REQUIRED" = "true" ] || fail "candidate-local gate not enabled"
 
-DEPLOYMENT_PULL_ALLOWED="$(jq -er '.execution.deployment_pull_allowed' "$MANIFEST")"
+DEPLOYMENT_PULL_ALLOWED="$(jq -r '.execution.deployment_pull_allowed' "$MANIFEST")"
 [ "$DEPLOYMENT_PULL_ALLOWED" = "false" ] || fail "deployment pull policy weakened"
 
 REPOSITORY="$(jq -er '.versions.candidate.image_repository' "$MANIFEST")"
@@ -102,7 +104,7 @@ LOCAL_ARCH="$(jq -er '.[0].Architecture' <<<"$LOCAL_JSON")"
 [ "$LOCAL_OS" = "$EXPECTED_OS" ] || fail "local candidate OS mismatch"
 [ "$LOCAL_ARCH" = "$EXPECTED_ARCH" ] || fail "local candidate architecture mismatch"
 
-jq -e --arg ref "$IMMUTABLE_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$LOCAL_JSON" >/dev/null || 
+jq -e --arg ref "$IMMUTABLE_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$LOCAL_JSON" >/dev/null || \
     fail "local candidate RepoDigests do not contain exact immutable reference"
 
 AFTER_CONTAINERS="$(
