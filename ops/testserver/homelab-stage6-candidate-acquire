@@ -1,0 +1,145 @@
+#!/bin/bash
+set -euo pipefail
+
+# Stage 6 candidate acquisition helper.
+#
+# This helper mutates only the local Docker image cache. It does not run
+# docker compose, create/restart/remove containers, edit Compose source, or
+# accept a caller-supplied image/digest/path.
+
+MANIFEST_DIR="/etc/homelab-stage6/services"
+VALIDATOR="/usr/local/libexec/homelab-stage6-validate-service-manifest"
+
+fail() {
+    printf 'FAIL: %s\n' "$1" >&2
+    exit 1
+}
+
+[ "$(id -u)" -eq 0 ] || fail "must run as root"
+[ "$#" -eq 1 ] || fail "usage: homelab-stage6-candidate-acquire SERVICE"
+
+SERVICE="$1"
+[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid service name"
+
+MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"
+
+[ -f "$MANIFEST" ] || fail "approved service manifest missing"
+[ ! -L "$MANIFEST" ] || fail "manifest must not be a symlink"
+[ "$(stat -c '%U:%G' "$MANIFEST")" = "root:root" ] || fail "manifest ownership invalid"
+MODE="$(stat -c '%a' "$MANIFEST")"
+case "$MODE" in
+    600|640|644) ;;
+    *) fail "manifest mode invalid" ;;
+esac
+
+[ -x "$VALIDATOR" ] || fail "manifest validator unavailable"
+"$VALIDATOR" "$MANIFEST" >/dev/null || fail "manifest validation failed"
+
+MANIFEST_SERVICE="$(jq -er '.service.name' "$MANIFEST")"
+[ "$MANIFEST_SERVICE" = "$SERVICE" ] || fail "manifest service mismatch"
+
+IMAGE_TYPE="$(jq -er '.service.image_type' "$MANIFEST")"
+[ "$IMAGE_TYPE" = "registry-image" ] || fail "unsupported image type"
+
+ACQUISITION_MODE="$(jq -er '.execution.candidate_acquisition' "$MANIFEST")"
+[ "$ACQUISITION_MODE" = "separate-reviewed-step" ] || fail "candidate acquisition not allowed by manifest"
+
+CANDIDATE_LOCAL_REQUIRED="$(jq -er '.execution.candidate_must_be_local_before_arm' "$MANIFEST")"
+[ "$CANDIDATE_LOCAL_REQUIRED" = "true" ] || fail "candidate-local gate not enabled"
+
+DEPLOYMENT_PULL_ALLOWED="$(jq -er '.execution.deployment_pull_allowed' "$MANIFEST")"
+[ "$DEPLOYMENT_PULL_ALLOWED" = "false" ] || fail "deployment pull policy weakened"
+
+REPOSITORY="$(jq -er '.versions.candidate.image_repository' "$MANIFEST")"
+IMMUTABLE_REF="$(jq -er '.versions.candidate.immutable_ref' "$MANIFEST")"
+INDEX_DIGEST="$(jq -er '.versions.candidate.index_digest' "$MANIFEST")"
+PLATFORM_DIGEST="$(jq -er '.versions.candidate.platform_manifest_digest' "$MANIFEST")"
+CONFIG_DIGEST="$(jq -er '.versions.candidate.config_digest' "$MANIFEST")"
+EXPECTED_OS="$(jq -er '.versions.candidate.platform.os' "$MANIFEST")"
+EXPECTED_ARCH="$(jq -er '.versions.candidate.platform.architecture' "$MANIFEST")"
+
+[ "$IMMUTABLE_REF" = "${REPOSITORY}@${INDEX_DIGEST}" ] || fail "candidate immutable reference mismatch"
+[[ "$INDEX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "candidate index digest invalid"
+[[ "$PLATFORM_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "candidate platform digest invalid"
+[[ "$CONFIG_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "candidate config digest invalid"
+[ "$EXPECTED_OS" = "linux" ] || fail "candidate OS is not linux"
+[ "$EXPECTED_ARCH" = "arm64" ] || fail "candidate architecture is not arm64"
+
+TARGET_CONTAINER="$(jq -er '.service.container' "$MANIFEST")"
+ROLLBACK_REF="$(jq -er '.versions.rollback.immutable_ref' "$MANIFEST")"
+ROLLBACK_LOCAL_ID="$(jq -er '.versions.rollback.local_image_id' "$MANIFEST")"
+HEALTH_STRATEGY="$(jq -er '.health.strategy' "$MANIFEST")"
+
+BEFORE_CONTAINERS="$(
+    docker ps -aq |
+    xargs -r docker inspect --format '{{.Name}}={{.Id}} restart={{.RestartCount}} running={{.State.Running}}' |
+    sed 's#^/##' |
+    sort
+)"
+
+LIVE_IMAGE_ID="$(docker inspect "$TARGET_CONTAINER" --format '{{.Image}}')" || fail "target container missing"
+[ "$LIVE_IMAGE_ID" = "$ROLLBACK_LOCAL_ID" ] || fail "target container is not exact rollback image"
+
+if [ "$HEALTH_STRATEGY" = "docker-health" ]; then
+    LIVE_HEALTH="$(docker inspect "$TARGET_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+    [ "$LIVE_HEALTH" = "healthy" ] || fail "target container is not healthy before acquisition"
+fi
+
+printf 'service=%s\n' "$SERVICE"
+printf 'candidate_ref=%s\n' "$IMMUTABLE_REF"
+printf 'candidate_platform_manifest=%s\n' "$PLATFORM_DIGEST"
+printf 'candidate_config_digest=%s\n' "$CONFIG_DIGEST"
+
+# Exact manifest-pinned pull only. No tag/latest and no caller-provided image.
+docker pull "$IMMUTABLE_REF" >/dev/null
+
+LOCAL_JSON="$(docker image inspect "$IMMUTABLE_REF")" || fail "candidate not inspectable after pull"
+LOCAL_ID="$(jq -er '.[0].Id' <<<"$LOCAL_JSON")"
+LOCAL_OS="$(jq -er '.[0].Os' <<<"$LOCAL_JSON")"
+LOCAL_ARCH="$(jq -er '.[0].Architecture' <<<"$LOCAL_JSON")"
+
+[ "$LOCAL_ID" = "$CONFIG_DIGEST" ] || fail "local image ID does not equal reviewed config digest"
+[ "$LOCAL_OS" = "$EXPECTED_OS" ] || fail "local candidate OS mismatch"
+[ "$LOCAL_ARCH" = "$EXPECTED_ARCH" ] || fail "local candidate architecture mismatch"
+
+jq -e --arg ref "$IMMUTABLE_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$LOCAL_JSON" >/dev/null || 
+    fail "local candidate RepoDigests do not contain exact immutable reference"
+
+AFTER_CONTAINERS="$(
+    docker ps -aq |
+    xargs -r docker inspect --format '{{.Name}}={{.Id}} restart={{.RestartCount}} running={{.State.Running}}' |
+    sed 's#^/##' |
+    sort
+)"
+
+[ "$BEFORE_CONTAINERS" = "$AFTER_CONTAINERS" ] || fail "container state changed during image acquisition"
+
+LIVE_IMAGE_ID_AFTER="$(docker inspect "$TARGET_CONTAINER" --format '{{.Image}}')"
+[ "$LIVE_IMAGE_ID_AFTER" = "$ROLLBACK_LOCAL_ID" ] || fail "target container image changed during acquisition"
+
+if [ "$HEALTH_STRATEGY" = "docker-health" ]; then
+    LIVE_HEALTH_AFTER="$(docker inspect "$TARGET_CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')"
+    [ "$LIVE_HEALTH_AFTER" = "healthy" ] || fail "target container health changed during acquisition"
+fi
+
+jq -n \
+    --arg service "$SERVICE" \
+    --arg candidate_ref "$IMMUTABLE_REF" \
+    --arg index_digest "$INDEX_DIGEST" \
+    --arg platform_manifest_digest "$PLATFORM_DIGEST" \
+    --arg config_digest "$CONFIG_DIGEST" \
+    --arg local_image_id "$LOCAL_ID" \
+    --arg os "$LOCAL_OS" \
+    --arg architecture "$LOCAL_ARCH" \
+    '{
+      artifact: "stage6-candidate-acquisition",
+      result: "acquired-and-verified",
+      service: $service,
+      candidate_ref: $candidate_ref,
+      index_digest: $index_digest,
+      platform_manifest_digest: $platform_manifest_digest,
+      config_digest: $config_digest,
+      local_image_id: $local_image_id,
+      platform: {os: $os, architecture: $architecture},
+      container_mutation_performed: false
+    }'
