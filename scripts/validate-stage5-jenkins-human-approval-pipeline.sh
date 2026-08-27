@@ -115,6 +115,30 @@ done
 echo "Exact pilot/image/policy/host-key identities pinned: PASS"
 echo
 
+echo "===== CPS-SAFE JSON PARSING ====="
+
+if grep -Pzoq \
+  'JsonSlurperClassic\(\)\.parseText\(\s*readFile\(' \
+  "$PIPELINE"
+then
+  fail "pipeline nests readFile inside JsonSlurperClassic.parseText; Jenkins CPS serialization hazard"
+fi
+
+PARSE_COUNT="$(grep -c -F 'new groovy.json.JsonSlurperClassic().parseText(' "$PIPELINE")"
+READ_COUNT="$(grep -c -F 'readFile(' "$PIPELINE")"
+
+printf 'json_parse_calls=%s\n' "$PARSE_COUNT"
+printf 'read_file_calls=%s\n' "$READ_COUNT"
+
+[ "$PARSE_COUNT" -eq 7 ] ||
+  fail "unexpected JsonSlurperClassic parse-call count"
+
+[ "$READ_COUNT" -eq 7 ] ||
+  fail "unexpected readFile call count"
+
+echo "No readFile pipeline step is nested inside JsonSlurperClassic.parseText: PASS"
+echo
+
 echo "===== LITERAL REMOTE ACTION SURFACE ====="
 
 for action in \
@@ -198,6 +222,7 @@ echo "PASS: existing Stage 4/Stage 5 implementation source unchanged"
 echo "PASS: executor credential cannot be bound before human approval + second inspection"
 echo "PASS: approval restricted to james and recorded"
 echo "PASS: exact immutable pilot identities pinned"
+echo "PASS: Jenkins CPS-unsafe nested readFile/parseText pattern rejected"
 echo "PASS: only literal inspect/arm/deploy/rollback/disarm actions"
 echo "PASS: rollback/disarm failure handling is fail closed"
 echo "PASS: source-only review; no live Jenkins job or sudo authority changed"
