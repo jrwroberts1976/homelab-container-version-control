@@ -1,0 +1,109 @@
+pipeline {
+  agent any
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  environment {
+    STAGE6_HOST = '172.30.255.249'
+    STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
+    STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+    STAGE6_CORE_SOURCE_COMMIT = '16465046d67caada6c399949bc15df3be0aea6d4'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Source and host-key preflight') {
+      steps {
+        sh '''
+          set -eu
+          set +x
+
+          test -f ops/testserver/homelab-stage6-executor-ssh
+          test -s "$STAGE6_KNOWN_HOSTS"
+
+          git merge-base --is-ancestor "$STAGE6_CORE_SOURCE_COMMIT" HEAD
+          git diff --quiet "$STAGE6_CORE_SOURCE_COMMIT" -- \
+            ops/testserver/homelab-stage6-executor-ssh
+
+          ssh-keygen \
+            -lf "$STAGE6_KNOWN_HOSTS" \
+            -E sha256 |
+          awk '{print $2}' |
+          grep -Fx "$STAGE6_HOSTKEY_FINGERPRINT" \
+            >/dev/null
+
+          install -d -m 0700 artifacts
+          rm -f artifacts/stage6-executor-ping*.txt
+
+          echo "PASS: Stage 6 executor wrapper source and TestServer host key pinned"
+        '''
+      }
+    }
+
+    stage('Executor credential ping smoke') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_EXECUTOR_KEY',
+            usernameVariable: 'STAGE6_EXECUTOR_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_EXECUTOR_USER" = "homelab-stage6-executor" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_EXECUTOR_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_EXECUTOR_USER@$STAGE6_HOST" \
+              ping \
+              </dev/null \
+              > artifacts/stage6-executor-ping.txt
+
+            test -s artifacts/stage6-executor-ping.txt
+            [ "$(tr -d '\\r\\n' < artifacts/stage6-executor-ping.txt)" = "pong" ]
+
+            printf '%s\n' \
+              'credential=homelab-stage6-testserver-executor' \
+              'username=homelab-stage6-executor' \
+              'remote_command=ping' \
+              'remote_result=pong' \
+              'mutation_performed=false' \
+              > artifacts/stage6-executor-ping-validated.txt
+
+            echo "PASS: Jenkins Stage 6 executor credential completed forced-command ping only"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts(
+        artifacts: 'artifacts/stage6-executor-ping*.txt',
+        allowEmptyArchive: true,
+        fingerprint: true
+      )
+    }
+  }
+}
