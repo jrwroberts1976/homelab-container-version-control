@@ -1,6 +1,6 @@
 # Stage 6 executor activation boundary
 
-Status: source-only activation contract under review
+Status: source-only activation contract; SSH permission correction under review
 
 Date: 2026-08-27
 
@@ -39,9 +39,9 @@ Required account properties:
 - no supplementary administrative groups;
 - no interactive password login;
 - no general sudo authority;
-- no ownership or write access to Stage 6 manifests, helpers, authority checkout, state root, sudoers, or authorized-key files.
+- no ownership or write access to Stage 6 manifests, helpers, authority checkout, state root, sudoers, or authorized-key policy files.
 
-The preferred home is `/var/lib/homelab-stage6-executor` with root-owned SSH policy material so the executor cannot modify its own authorized key restrictions.
+The preferred home is `/var/lib/homelab-stage6-executor`. SSH policy material remains root-owned so the executor cannot change its own authorized-key restrictions, but the executor group receives only the minimum traverse/read access required for sshd public-key authorization.
 
 ## SSH boundary
 
@@ -57,13 +57,29 @@ The private key must never be committed to Git or written into this repository.
 
 Required live permissions:
 
-- executor home: root-owned, not group/other writable;
-- `.ssh`: root:root `0700`;
-- `authorized_keys`: root:root `0600`;
+- executor home: root:root `0755`;
+- `.ssh`: root:homelab-stage6-executor `0750`;
+- `authorized_keys`: root:homelab-stage6-executor `0640`;
 - forced-command wrapper: root:root `0755` with the reviewed SHA256;
 - source restriction: Jenkins validation address `172.30.255.250` only.
 
+The executor may traverse `.ssh` and read `authorized_keys`, but must not own or have write access to either path. This preserves root control of the authorization policy while allowing sshd to evaluate the target user's key file under the host's current OpenSSH configuration.
+
 `restrict` plus the forced command prevents PTY allocation, forwarding, tunnelling and user RC processing for this key.
+
+## SSH permission correction evidence
+
+A live failed-closed Stage 6 activation test proved that the earlier `root:root 0700` `.ssh` and `root:root 0600` `authorized_keys` model prevented public-key authentication even though the Jenkins source address, TestServer host key and network path were correct.
+
+The already-proven Stage 5 executor on the same TestServer uses:
+
+- executor home: root:root `0755`;
+- `.ssh`: root:homelab-stage5-executor `0750`;
+- `authorized_keys`: root:homelab-stage5-executor `0640`.
+
+The Stage 5 target user can traverse `.ssh` and read `authorized_keys` but cannot modify the root-owned policy material. Stage 6 adopts the same access pattern with its own dedicated executor group.
+
+The failed Stage 6 activation rolled back the account/home before sudo activation; no update was armed or consumed and no container was mutated.
 
 ## Sudo boundary
 
@@ -109,17 +125,18 @@ The executor credential must not be present in the environment before steps 3-7 
 A separate live activation change should:
 
 1. re-prove the staged execution helper hashes and current inactive state;
-2. generate a new independent ED25519 key pair outside Git;
+2. reuse the already-verified independent ED25519 key pair or generate a replacement outside Git if explicitly required;
 3. create the locked executor account without Docker/admin groups;
-4. install root-owned SSH policy material with the exact authorized-key restriction;
-5. install the exact reviewed sudoers fragment root:root `0440`;
-6. run `visudo -cf` against the fragment;
-7. prove direct password/local privilege paths are unavailable;
-8. prove the forced command accepts only `ping`, `arm dashy`, `deploy dashy`, `rollback dashy`, and `disarm dashy` at the wrapper layer;
-9. prove arbitrary shell/Docker/Compose/service commands are rejected;
-10. prove no state directory, enable file or consumed marker was created merely by activating the identity;
-11. prove all containers are unchanged;
-12. only after host-side proof, create the Jenkins credential from the private key in Jenkins credential storage.
+4. install root-owned, executor-group-readable SSH policy material with the exact authorized-key restriction and corrected `0750`/`0640` access model;
+5. prove the executor can traverse `.ssh` and read but cannot write `authorized_keys`;
+6. prove real SSH public-key authentication from Jenkins source `172.30.255.250` before sudo activation;
+7. prove the forced command accepts `ping` and rejects arbitrary shell commands;
+8. install the exact reviewed sudoers fragment root:root `0440`;
+9. run `visudo -cf` against the fragment;
+10. prove direct password/local privilege paths are unavailable;
+11. prove no state directory, enable file or consumed marker was created merely by activating the identity;
+12. prove all containers are unchanged;
+13. only after host-side proof, create the Jenkins credential from the private key in Jenkins credential storage.
 
 The first Jenkins use must still stop for human approval before any mutation.
 
@@ -134,10 +151,12 @@ The first Jenkins use must still stop for human approval before any mutation.
 - no private-key material in source;
 - exact alignment with the already-reviewed Stage 6 executor wrapper.
 
-## Not included in this PR
+The live activation proof must additionally enforce the corrected SSH ownership and mode contract described above.
+
+## Not included in this correction
 
 - executor Unix account creation;
-- key generation;
+- key generation or replacement;
 - actual public key material;
 - private key material;
 - `.ssh` or `authorized_keys` installation;
@@ -148,4 +167,4 @@ The first Jenkins use must still stop for human approval before any mutation.
 - arm/deploy/rollback/disarm execution;
 - any container recreation.
 
-Effective deployment authority therefore remains false after merging this source-only contract.
+Effective deployment authority therefore remains false after merging this source-only correction.
