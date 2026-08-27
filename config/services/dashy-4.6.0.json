@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "artifact": "service-update-manifest",
+  "mode": "stage6-generic",
+  "service": {
+    "name": "dashy",
+    "container": "dashy",
+    "host": "TestServer",
+    "risk_class": "low",
+    "compose": {
+      "project": "dashboards",
+      "service": "dashy",
+      "project_directory": "/home/james/docker/stacks/dashboards",
+      "compose_file": "/home/james/docker/stacks/dashboards/docker-compose.yml"
+    }
+  },
+  "authority": {
+    "repository": "docker-env",
+    "revision": "b8058c667cac59dc741587f0554437ee000f6486",
+    "compose_sha256": "ffda0a4e3a42c350535dd1f0ed81a8326a5b1456f0d76f0570ef116465339c56",
+    "runtime_files": [
+      {
+        "path": "/home/james/docker/data/dashboards/dashy/conf.yml",
+        "role": "dashy-config",
+        "sha256": "03d8e2c988c949ae298b2ea76867759d359b5272a14e4b1f1bef33f2e71a96aa"
+      }
+    ]
+  },
+  "versions": {
+    "scheme": "semver",
+    "rollback": {
+      "version": "4.5.13",
+      "image_repository": "lissy93/dashy",
+      "immutable_ref": "lissy93/dashy@sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4",
+      "index_digest": "sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4",
+      "platform_manifest_digest": null,
+      "local_image_id": "sha256:417b161fc4c22a4dc6759110f6794c880c72a91e4b8c64e1d653605c2726b3ee",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    },
+    "candidate": {
+      "version": "4.6.0",
+      "image_repository": "lissy93/dashy",
+      "immutable_ref": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59",
+      "index_digest": "sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59",
+      "platform_manifest_digest": "sha256:cb6a9839b13481e8f96104482fed6e30f7aba186fa636a43a14cb2cb31b72e92",
+      "config_digest": "sha256:f7c93e5961154c8ee4a4bce7f4448d30b9ee46def5ed8eb3ebef3d111370de99",
+      "revision": "d707730b454a35c52187e824879386e1eb30f869",
+      "created": "2026-08-21T12:22:55Z",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    }
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/dashboards/dashy/conf.yml",
+        "destination": "/app/user-data/conf.yml",
+        "rw": true,
+        "sha256": "03d8e2c988c949ae298b2ea76867759d359b5272a14e4b1f1bef33f2e71a96aa"
+      }
+    ],
+    "user": "node",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false,
+    "compose_execution": {
+      "no_deps": true,
+      "no_build": true,
+      "pull": "never",
+      "force_recreate": true
+    }
+  },
+  "health": {
+    "strategy": "docker-health",
+    "expected": "healthy",
+    "timeout_seconds": 360
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ],
+    "compare": [
+      "container_id",
+      "restart_count"
+    ]
+  },
+  "execution": {
+    "human_approval_required": true,
+    "post_approval_reinspection_required": true,
+    "one_shot_required": true,
+    "candidate_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "rollback_required": true,
+    "rollback_only_for_consumed_pilot": true
+  }
+}
