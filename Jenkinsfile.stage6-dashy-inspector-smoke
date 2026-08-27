@@ -1,0 +1,204 @@
+pipeline {
+  agent any
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  environment {
+    STAGE6_HOST = '172.30.255.249'
+    STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
+    STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+    STAGE6_SERVICE = 'dashy'
+    STAGE6_CORE_SOURCE_COMMIT = '9f7cec68994a3213acfb0bfe6d243fd8626d8e7a'
+    STAGE6_ROLLBACK_REF = 'lissy93/dashy@sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4'
+    STAGE6_ROLLBACK_IMAGE_ID = 'sha256:417b161fc4c22a4dc6759110f6794c880c72a91e4b8c64e1d653605c2726b3ee'
+    STAGE6_CANDIDATE_REF = 'lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59'
+    STAGE6_CANDIDATE_IMAGE_ID = 'sha256:f7c93e5961154c8ee4a4bce7f4448d30b9ee46def5ed8eb3ebef3d111370de99'
+    STAGE6_CANDIDATE_PLATFORM_MANIFEST = 'sha256:cb6a9839b13481e8f96104482fed6e30f7aba186fa636a43a14cb2cb31b72e92'
+    STAGE6_CANDIDATE_REVISION = 'd707730b454a35c52187e824879386e1eb30f869'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Source and host-key preflight') {
+      steps {
+        sh '''
+          set -eu
+          set +x
+
+          test -f ops/testserver/homelab-stage6-inspector-ssh
+          test -f ops/testserver/homelab-stage6-inspector-sudoers
+          test -f ops/testserver/homelab-stage6-inspector-authorized-key.template
+          test -f scripts/validate-stage6-inspector-transport.py
+          test -f ops/testserver/homelab-stage6-inspect
+          test -f config/services/dashy-4.6.0.json
+          test -s "$STAGE6_KNOWN_HOSTS"
+
+          git merge-base --is-ancestor "$STAGE6_CORE_SOURCE_COMMIT" HEAD
+
+          ssh-keygen \
+            -lf "$STAGE6_KNOWN_HOSTS" \
+            -E sha256 |
+          awk '{print $2}' |
+          grep -Fx "$STAGE6_HOSTKEY_FINGERPRINT" \
+            >/dev/null
+
+          install -d -m 0700 artifacts
+          rm -f artifacts/stage6-inspector-smoke-*.json artifacts/stage6-inspector-smoke-*.txt
+
+          echo "PASS: Stage 6 inspector source dependency and TestServer host key pinned"
+        '''
+      }
+    }
+
+    stage('Inspector credential smoke') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-inspector',
+            keyFileVariable: 'STAGE6_INSPECT_KEY',
+            usernameVariable: 'STAGE6_INSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_INSPECT_USER" = "homelab-stage6-inspector" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_INSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_INSPECT_USER@$STAGE6_HOST" \
+              ping \
+              </dev/null \
+              > artifacts/stage6-inspector-smoke-ping.txt
+
+            grep -Fx 'pong' artifacts/stage6-inspector-smoke-ping.txt >/dev/null
+
+            ssh \
+              -n \
+              -i "$STAGE6_INSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_INSPECT_USER@$STAGE6_HOST" \
+              "inspect dashy" \
+              </dev/null \
+              > artifacts/stage6-inspector-smoke-inspection.json
+
+            test -s artifacts/stage6-inspector-smoke-inspection.json
+          '''
+        }
+      }
+    }
+
+    stage('Assert read-only inspection artifact') {
+      steps {
+        script {
+          def raw = readFile('artifacts/stage6-inspector-smoke-inspection.json')
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'service-update-inspection' ||
+              a.mode != 'stage6-preapproval-inspect') {
+            error('Unexpected Stage 6 inspection schema/artifact/mode')
+          }
+
+          if (a.service != env.STAGE6_SERVICE || a.host != 'TestServer') {
+            error('Unexpected Stage 6 service/host')
+          }
+
+          if (a.current?.state != 'rollback' ||
+              a.current?.configured_image != 'lissy93/dashy:4.5.13') {
+            error('Dashy current state is not the reviewed rollback baseline')
+          }
+
+          if (a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.rollback?.local_image_id != env.STAGE6_ROLLBACK_IMAGE_ID ||
+              a.rollback?.platform != 'linux/arm64' ||
+              a.rollback?.local != true) {
+            error('Stage 6 rollback identity/local ARM64 gate failed')
+          }
+
+          if (a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.candidate?.local_image_id != env.STAGE6_CANDIDATE_IMAGE_ID ||
+              a.candidate?.platform_manifest_digest != env.STAGE6_CANDIDATE_PLATFORM_MANIFEST ||
+              a.candidate?.revision != env.STAGE6_CANDIDATE_REVISION ||
+              a.candidate?.platform != 'linux/arm64' ||
+              a.candidate?.local != true) {
+            error('Stage 6 candidate identity/local ARM64 gate failed')
+          }
+
+          if (a.runtime?.invariants != 'pass' ||
+              a.runtime?.health_strategy != 'docker-health' ||
+              a.runtime?.health_result != 'healthy') {
+            error('Stage 6 runtime/health gate failed')
+          }
+
+          if (a.approval?.required != true || a.approval?.granted != false) {
+            error('Stage 6 smoke inspection approval state is unexpected')
+          }
+
+          if (a.deployment?.allowed != false || a.deployment?.performed != false) {
+            error('Stage 6 smoke inspection unexpectedly permits deployment')
+          }
+
+          if (a.result != 'ready-for-human-review') {
+            error('Stage 6 inspection is not ready for human review')
+          }
+
+          def evidence = [
+            artifact: a.artifact,
+            mode: a.mode,
+            service: a.service,
+            host: a.host,
+            current: a.current,
+            rollback: a.rollback,
+            candidate: a.candidate,
+            runtime: a.runtime,
+            approval: a.approval,
+            deployment: a.deployment,
+            result: a.result
+          ]
+
+          writeFile(
+            file: 'artifacts/stage6-inspector-smoke-validated.json',
+            text: groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(evidence)) + '\n'
+          )
+
+          echo('PASS: Jenkins Stage 6 inspector credential completed ping + read-only Dashy inspection')
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts(
+        artifacts: 'artifacts/stage6-inspector-smoke-*',
+        allowEmptyArchive: true,
+        fingerprint: true
+      )
+    }
+  }
+}
