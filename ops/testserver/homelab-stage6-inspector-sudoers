@@ -1,0 +1,1 @@
+homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect dashy
