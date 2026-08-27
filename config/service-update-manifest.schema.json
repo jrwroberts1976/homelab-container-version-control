@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jrwroberts1976/homelab-container-version-control/config/service-update-manifest.schema.json",
+  "title": "Stage 6 Service Update Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact",
+    "mode",
+    "service",
+    "authority",
+    "versions",
+    "runtime",
+    "health",
+    "protection",
+    "execution"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact": { "const": "service-update-manifest" },
+    "mode": { "const": "stage6-generic" },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "container", "host", "risk_class", "compose"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "container": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "minLength": 1 },
+        "risk_class": { "enum": ["low", "medium", "high", "excluded"] },
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["project", "service", "project_directory", "compose_file"],
+          "properties": {
+            "project": { "type": "string", "minLength": 1 },
+            "service": { "type": "string", "minLength": 1 },
+            "project_directory": { "type": "string", "pattern": "^/" },
+            "compose_file": { "type": "string", "pattern": "^/" }
+          }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "compose_sha256", "runtime_files"],
+      "properties": {
+        "repository": { "const": "docker-env" },
+        "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "compose_sha256": { "$ref": "#/$defs/sha256" },
+        "runtime_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "role", "sha256"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^/" },
+              "role": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scheme", "rollback", "candidate"],
+      "properties": {
+        "scheme": {
+          "enum": ["semver", "yyyymmdd", "integer", "opaque", "channel", "provenance"]
+        },
+        "rollback": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "image_repository", "immutable_ref", "index_digest", "local_image_id", "platform"],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "image_repository": { "type": "string", "minLength": 1 },
+            "immutable_ref": { "$ref": "#/$defs/immutableRef" },
+            "index_digest": { "$ref": "#/$defs/digest" },
+            "platform_manifest_digest": {
+              "anyOf": [ { "$ref": "#/$defs/digest" }, { "type": "null" } ]
+            },
+            "local_image_id": { "$ref": "#/$defs/digest" },
+            "platform": { "$ref": "#/$defs/platform" }
+          }
+        },
+        "candidate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "image_repository",
+            "immutable_ref",
+            "index_digest",
+            "platform_manifest_digest",
+            "config_digest",
+            "revision",
+            "created",
+            "platform"
+          ],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "image_repository": { "type": "string", "minLength": 1 },
+            "immutable_ref": { "$ref": "#/$defs/immutableRef" },
+            "index_digest": { "$ref": "#/$defs/digest" },
+            "platform_manifest_digest": { "$ref": "#/$defs/digest" },
+            "config_digest": { "$ref": "#/$defs/digest" },
+            "revision": { "type": "string", "minLength": 1 },
+            "created": { "type": "string", "format": "date-time" },
+            "platform": { "$ref": "#/$defs/platform" }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "networks",
+        "published_ports",
+        "mounts",
+        "user",
+        "privileged",
+        "readonly_rootfs",
+        "restart_policy",
+        "devices_allowed",
+        "docker_socket_allowed",
+        "compose_execution"
+      ],
+      "properties": {
+        "networks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "published_ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host_ip", "host_port", "container_port", "protocol"],
+            "properties": {
+              "host_ip": { "type": "string", "minLength": 1 },
+              "host_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "container_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "protocol": { "enum": ["tcp", "udp"] }
+            }
+          },
+          "uniqueItems": true
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "source", "destination", "rw", "sha256"],
+            "properties": {
+              "type": { "enum": ["bind", "volume"] },
+              "source": { "type": "string", "minLength": 1 },
+              "destination": { "type": "string", "pattern": "^/" },
+              "rw": { "type": "boolean" },
+              "sha256": {
+                "anyOf": [ { "$ref": "#/$defs/sha256" }, { "type": "null" } ]
+              }
+            }
+          },
+          "uniqueItems": true
+        },
+        "user": { "type": "string" },
+        "privileged": { "const": false },
+        "readonly_rootfs": { "type": "boolean" },
+        "restart_policy": { "type": "string", "minLength": 1 },
+        "devices_allowed": { "const": false },
+        "docker_socket_allowed": { "const": false },
+        "compose_execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["no_deps", "no_build", "pull", "force_recreate"],
+          "properties": {
+            "no_deps": { "const": true },
+            "no_build": { "const": true },
+            "pull": { "const": "never" },
+            "force_recreate": { "const": true }
+          }
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "expected", "timeout_seconds"],
+      "properties": {
+        "strategy": { "const": "docker-health" },
+        "expected": { "const": "healthy" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 }
+      }
+    },
+    "protection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["containers", "compare"],
+      "properties": {
+        "containers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "compare": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["container_id", "restart_count"] }
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "human_approval_required",
+        "post_approval_reinspection_required",
+        "one_shot_required",
+        "candidate_must_be_local_before_arm",
+        "deployment_pull_allowed",
+        "rollback_required",
+        "rollback_only_for_consumed_pilot"
+      ],
+      "properties": {
+        "human_approval_required": { "const": true },
+        "post_approval_reinspection_required": { "const": true },
+        "one_shot_required": { "const": true },
+        "candidate_must_be_local_before_arm": { "const": true },
+        "deployment_pull_allowed": { "const": false },
+        "rollback_required": { "const": true },
+        "rollback_only_for_consumed_pilot": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "immutableRef": {
+      "type": "string",
+      "pattern": "^[^@[:space:]]+@sha256:[0-9a-f]{64}$"
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
