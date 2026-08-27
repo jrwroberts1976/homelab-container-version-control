@@ -40,6 +40,8 @@ echo "PASS: inspection policy is read-only and deployment-disabled"
 for REQUIRED in \
   'INSPECTOR="/usr/local/libexec/homelab-stage5-maintenance-page-inspect"' \
   'enable file must be absent for inspection-only authority' \
+  'require_inspection_installed_context' \
+  'require_execution_installed_context' \
   'require_inspection_policy' \
   'require_execution_policy' \
   'exec "$INSPECTOR" inspect' \
@@ -50,6 +52,52 @@ do
 done
 
 echo "PASS: authority gate separates inspect from execution paths"
+
+INSPECTION_CONTEXT="$(
+  awk '
+    /^require_inspection_installed_context\(\)/ {capture=1}
+    capture {print}
+    capture && /^}/ {exit}
+  ' "$GATE"
+)"
+
+EXECUTION_CONTEXT="$(
+  awk '
+    /^require_execution_installed_context\(\)/ {capture=1}
+    capture {print}
+    capture && /^}/ {exit}
+  ' "$GATE"
+)"
+
+printf '%s\n' "$INSPECTION_CONTEXT" |
+grep -Fq 'require_common_installed_context' ||
+  fail "inspection context does not use common installed guards"
+
+printf '%s\n' "$INSPECTION_CONTEXT" |
+grep -Fq 'enable file must be absent for inspection-only authority' ||
+  fail "inspection context does not require enable-file absence"
+
+if printf '%s\n' "$INSPECTION_CONTEXT" |
+   grep -Fq 'INNER_HELPER'
+then
+  fail "inspection context requires the mutating inner helper"
+fi
+
+echo "PASS: inspection context does not require deploy helper installation"
+
+printf '%s\n' "$EXECUTION_CONTEXT" |
+grep -Fq 'require_secure_root_file "$INNER_HELPER"' ||
+  fail "execution context does not require the inner helper"
+
+printf '%s\n' "$EXECUTION_CONTEXT" |
+grep -Fq 'require_secure_root_file "$ENABLE_FILE"' ||
+  fail "execution context does not require the enable file"
+
+printf '%s\n' "$EXECUTION_CONTEXT" |
+grep -Fq '.implementation.helper_sha256' ||
+  fail "execution context does not pin the helper hash"
+
+echo "PASS: deploy helper is required only by execution context"
 
 if grep -nE \
   'docker compose (up|down|pull|build)|docker (pull|run|rm|restart|exec|tag|push|build|system|network|volume)|git (commit|push|reset|checkout|switch|merge|rebase)|(^|[^A-Za-z])eval([^A-Za-z]|$)|bash -c|sh -c' \
@@ -173,4 +221,5 @@ fi
 echo "PASS: Stage 4 read-only wrapper remains mutation-free"
 
 echo "PASS: STAGE 5 INSPECTION-ONLY SOURCE BOUNDARY VALIDATED"
+echo "NO DEPLOYMENT HELPER IS REQUIRED BY THE INSPECTION PATH"
 echo "NO DEPLOYMENT AUTHORITY EXISTS IN THE INSPECTION-ONLY SSH PATH"

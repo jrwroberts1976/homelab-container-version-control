@@ -75,10 +75,8 @@ verify_hash() {
     fail "configuration hash mismatch: $file"
 }
 
-require_installed_context() {
-  local action="$1"
+require_common_installed_context() {
   local self actual_gate_sha expected_gate_sha
-  local actual_helper_sha expected_helper_sha
   local actual_inspector_sha expected_inspector_sha
 
   [ "$(id -u)" -eq 0 ] ||
@@ -90,17 +88,9 @@ require_installed_context() {
     fail "authority gate is not running from reviewed installed path"
 
   require_secure_root_file "$INSTALLED_SELF"
-  require_secure_root_file "$INNER_HELPER"
   require_secure_root_file "$INSPECTOR"
   require_secure_root_file "$POLICY_FILE"
   require_secure_root_dir "$AUTHORITY_DIR"
-
-  if [ "$action" = "inspect" ]; then
-    [ ! -e "$ENABLE_FILE" ] ||
-      fail "enable file must be absent for inspection-only authority"
-  else
-    require_secure_root_file "$ENABLE_FILE"
-  fi
 
   actual_gate_sha="$(sha256sum "$INSTALLED_SELF" | awk '{print $1}')"
   expected_gate_sha="$(policy_string '.implementation.authority_gate_sha256')"
@@ -108,17 +98,32 @@ require_installed_context() {
   [ "$actual_gate_sha" = "$expected_gate_sha" ] ||
     fail "installed authority gate hash does not match policy"
 
-  actual_helper_sha="$(sha256sum "$INNER_HELPER" | awk '{print $1}')"
-  expected_helper_sha="$(policy_string '.implementation.helper_sha256')"
-
-  [ "$actual_helper_sha" = "$expected_helper_sha" ] ||
-    fail "installed helper hash does not match policy"
-
   actual_inspector_sha="$(sha256sum "$INSPECTOR" | awk '{print $1}')"
   expected_inspector_sha="$(policy_string '.implementation.inspector_sha256')"
 
   [ "$actual_inspector_sha" = "$expected_inspector_sha" ] ||
     fail "installed inspector hash does not match policy"
+}
+
+require_inspection_installed_context() {
+  require_common_installed_context
+
+  [ ! -e "$ENABLE_FILE" ] ||
+    fail "enable file must be absent for inspection-only authority"
+}
+
+require_execution_installed_context() {
+  local actual_helper_sha expected_helper_sha
+
+  require_common_installed_context
+  require_secure_root_file "$INNER_HELPER"
+  require_secure_root_file "$ENABLE_FILE"
+
+  actual_helper_sha="$(sha256sum "$INNER_HELPER" | awk '{print $1}')"
+  expected_helper_sha="$(policy_string '.implementation.helper_sha256')"
+
+  [ "$actual_helper_sha" = "$expected_helper_sha" ] ||
+    fail "installed helper hash does not match policy"
 }
 
 require_common_policy_identity() {
@@ -247,7 +252,7 @@ ACTION="${1:-}"
 
 case "$ACTION" in
   inspect)
-    require_installed_context inspect
+    require_inspection_installed_context
     require_inspection_policy
     verify_git_authority
     verify_authoritative_configuration
@@ -255,7 +260,7 @@ case "$ACTION" in
     ;;
 
   deploy|rollback)
-    require_installed_context "$ACTION"
+    require_execution_installed_context
     require_execution_policy
     verify_git_authority
     verify_authoritative_configuration
