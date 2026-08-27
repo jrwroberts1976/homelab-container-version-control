@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -33,8 +34,20 @@ def validate_sudoers(path: Path) -> None:
     require(lines == expected, "sudoers boundary must contain exactly four literal Dashy commands")
 
     text = path.read_text(encoding="utf-8")
-    for token in ("*", "?", "[", "]", "$", "`", "\\", "/bin/sh", "/bin/bash", "docker", "compose", "git ", "cp ", "mv ", "rm ", "tee ", "vi ", "vim ", "nano "):
-        require(token not in "\n".join(lines), f"sudoers boundary contains forbidden token: {token}")
+    significant = "\n".join(lines)
+
+    for token in ("*", "?", "[", "]", "$", "`", "\\"):
+        require(token not in significant, f"sudoers boundary contains forbidden metacharacter: {token}")
+
+    forbidden_command = re.compile(
+        r"(?:^|[\s,:])(?:/usr/bin/|/bin/)?(?:sh|bash|docker|compose|git|cp|mv|rm|tee|vi|vim|nano)(?=\s|$)"
+    )
+    match = forbidden_command.search(significant)
+    require(
+        match is None,
+        f"sudoers boundary contains forbidden command token: {match.group(0).strip() if match else ''}",
+    )
+
     require("NOPASSWD: ALL" not in text, "sudoers must not grant NOPASSWD: ALL")
     require("(ALL" not in text, "sudoers runas target must remain root only")
 
