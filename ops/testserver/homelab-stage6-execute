@@ -149,7 +149,7 @@ verify_runtime_shape() {
     local expected_image_id="$1" expected_config_image="$2"
     local container_json expected_networks actual_networks expected_ports actual_ports
     local expected_mounts actual_mounts expected_user expected_privileged expected_readonly expected_restart
-    local source expected_sha actual_sha
+    local source source_kind expected_sha actual_sha
 
     container_json="$(docker inspect "$TARGET_CONTAINER" 2>/dev/null)" || fail "target container unavailable"
     [ "$(jq -r '.[0].State.Running' <<<"$container_json")" = "true" ] || fail "target container is not running"
@@ -168,12 +168,49 @@ verify_runtime_shape() {
     actual_mounts="$(jq -c '[.[0].Mounts[] | {type:.Type,source:.Source,destination:.Destination,rw:.RW}] | sort_by(.destination,.source)' <<<"$container_json")"
     [ "$actual_mounts" = "$expected_mounts" ] || fail "target mount shape mismatch"
 
-    while IFS=$'\t' read -r source expected_sha; do
+    while IFS=$'\t' read -r source source_kind expected_sha; do
         [ -n "$source" ] || continue
-        [ -f "$source" ] || fail "bind-mount source missing: $source"
-        actual_sha="$(sha256sum "$source" | awk '{print $1}')"
-        [ "$actual_sha" = "$expected_sha" ] || fail "bind-mount content hash mismatch: $source"
-    done < <(jq -r '.runtime.mounts[] | select(.type == "bind") | [.source,.sha256] | @tsv' "$MANIFEST")
+
+        [ ! -L "$source" ] ||
+            fail "bind-mount source must not be a symlink: $source"
+
+        case "$source_kind" in
+            file)
+                [ -f "$source" ] ||
+                    fail "bind-mount file missing: $source"
+
+                [ -n "$expected_sha" ] ||
+                    fail "bind-mount file SHA-256 missing: $source"
+
+                actual_sha="$(sha256sum "$source" | awk '{print $1}')"
+
+                [ "$actual_sha" = "$expected_sha" ] ||
+                    fail "bind-mount content hash mismatch: $source"
+                ;;
+
+            directory)
+                [ -d "$source" ] ||
+                    fail "bind-mount directory missing: $source"
+
+                [ -z "$expected_sha" ] ||
+                    fail "persistent directory must not carry static SHA-256: $source"
+                ;;
+
+            *)
+                fail "unsupported bind-mount source kind: $source_kind"
+                ;;
+        esac
+    done < <(
+        jq -r '.runtime.mounts[]
+            | select(.type == "bind")
+            | [
+                .source,
+                (.source_kind // "file"),
+                (.sha256 // "")
+              ]
+            | @tsv' \
+            "$MANIFEST"
+    )
 
     expected_user="$(manifest_string '.runtime.user')"
     expected_privileged="$(jq -r '.runtime.privileged' "$MANIFEST")"

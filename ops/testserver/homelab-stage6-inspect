@@ -192,26 +192,44 @@ verify_local_images() {
         <<<"$candidate_json" >/dev/null ||
         fail "candidate RepoDigests missing exact immutable ref"
 
-    candidate_version="$(
-        jq -r '.[0].Config.Labels["org.opencontainers.image.version"] // ""' \
-            <<<"$candidate_json"
-    )"
-    candidate_revision="$(
-        jq -r '.[0].Config.Labels["org.opencontainers.image.revision"] // ""' \
-            <<<"$candidate_json"
-    )"
+    case "$CANDIDATE_METADATA_VERIFICATION" in
+        oci-labels)
+            candidate_version="$(
+                jq -r \
+                    '.[0].Config.Labels["org.opencontainers.image.version"] // ""' \
+                    <<<"$candidate_json"
+            )"
 
-    [ "$candidate_version" = "$CANDIDATE_VERSION" ] ||
-        fail "candidate OCI version mismatch"
-    [ "$candidate_revision" = "$CANDIDATE_REVISION" ] ||
-        fail "candidate OCI revision mismatch"
+            candidate_revision="$(
+                jq -r \
+                    '.[0].Config.Labels["org.opencontainers.image.revision"] // ""' \
+                    <<<"$candidate_json"
+            )"
+
+            [ "$candidate_version" = "$CANDIDATE_VERSION" ] ||
+                fail "candidate OCI version mismatch"
+
+            [ "$candidate_revision" = "$CANDIDATE_REVISION" ] ||
+                fail "candidate OCI revision mismatch"
+            ;;
+
+        digest-pinned)
+            # Some upstream images do not publish OCI version/revision labels.
+            # Exact immutable ref, config digest, platform and RepoDigest remain
+            # mandatory cryptographic identity gates.
+            ;;
+
+        *)
+            fail "unsupported candidate metadata verification mode"
+            ;;
+    esac
 }
 
 verify_runtime_shape() {
     local container_json expected_networks actual_networks
     local expected_ports actual_ports expected_mounts actual_mounts
     local expected_user expected_privileged expected_readonly expected_restart
-    local source expected_sha actual_sha
+    local source source_kind expected_sha actual_sha
 
     container_json="$(docker inspect "$TARGET_CONTAINER" 2>/dev/null)" ||
         fail "target container unavailable"
@@ -272,17 +290,46 @@ verify_runtime_shape() {
     [ "$actual_mounts" = "$expected_mounts" ] ||
         fail "target mount shape mismatch"
 
-    while IFS=$'\t' read -r source expected_sha; do
+    while IFS=$'\t' read -r source source_kind expected_sha; do
         [ -n "$source" ] || continue
-        [ -f "$source" ] ||
-            fail "bind-mount source missing: $source"
-        actual_sha="$(sha256sum "$source" | awk '{print $1}')"
-        [ "$actual_sha" = "$expected_sha" ] ||
-            fail "bind-mount content hash mismatch: $source"
+
+        [ ! -L "$source" ] ||
+            fail "bind-mount source must not be a symlink: $source"
+
+        case "$source_kind" in
+            file)
+                [ -f "$source" ] ||
+                    fail "bind-mount file missing: $source"
+
+                [ -n "$expected_sha" ] ||
+                    fail "bind-mount file SHA-256 missing: $source"
+
+                actual_sha="$(sha256sum "$source" | awk '{print $1}')"
+
+                [ "$actual_sha" = "$expected_sha" ] ||
+                    fail "bind-mount content hash mismatch: $source"
+                ;;
+
+            directory)
+                [ -d "$source" ] ||
+                    fail "bind-mount directory missing: $source"
+
+                [ -z "$expected_sha" ] ||
+                    fail "persistent directory must not carry static SHA-256: $source"
+                ;;
+
+            *)
+                fail "unsupported bind-mount source kind: $source_kind"
+                ;;
+        esac
     done < <(
         jq -r '.runtime.mounts[]
             | select(.type == "bind")
-            | [.source, .sha256]
+            | [
+                .source,
+                (.source_kind // "file"),
+                (.sha256 // "")
+              ]
             | @tsv' \
             "$MANIFEST"
     )
@@ -421,6 +468,7 @@ emit_inspection() {
         --arg candidate_id "$candidate_id" \
         --arg candidate_platform_manifest "$CANDIDATE_PLATFORM_DIGEST" \
         --arg candidate_revision "$CANDIDATE_REVISION" \
+        --arg candidate_metadata_verification "$CANDIDATE_METADATA_VERIFICATION" \
         --arg health_strategy "$(manifest_string '.health.strategy')" \
         --arg health_result "$HEALTH_RESULT" \
         --argjson container_state "$CONTAINER_STATE" \
@@ -461,6 +509,7 @@ emit_inspection() {
             local_image_id: $candidate_id,
             platform_manifest_digest: $candidate_platform_manifest,
             revision: $candidate_revision,
+            metadata_verification: $candidate_metadata_verification,
             platform: "linux/arm64",
             local: true
           },
@@ -530,6 +579,9 @@ CANDIDATE_REF="$(manifest_string '.versions.candidate.immutable_ref')"
 CANDIDATE_CONFIG_DIGEST="$(manifest_string '.versions.candidate.config_digest')"
 CANDIDATE_PLATFORM_DIGEST="$(manifest_string '.versions.candidate.platform_manifest_digest')"
 CANDIDATE_REVISION="$(manifest_string '.versions.candidate.revision')"
+CANDIDATE_METADATA_VERIFICATION="$(
+    jq -r '.versions.candidate.metadata_verification // "oci-labels"' "$MANIFEST"
+)"
 CANDIDATE_OS="$(manifest_string '.versions.candidate.platform.os')"
 CANDIDATE_ARCH="$(manifest_string '.versions.candidate.platform.architecture')"
 

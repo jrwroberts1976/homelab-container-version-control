@@ -145,6 +145,15 @@ def validate_manifest(manifest: dict) -> None:
     require(candidate.get("index_digest") != rollback.get("index_digest"), "candidate equals rollback digest")
     validate_datetime(candidate.get("created", ""))
 
+    metadata_verification = candidate.get(
+        "metadata_verification",
+        "oci-labels",
+    )
+    require(
+        metadata_verification in {"oci-labels", "digest-pinned"},
+        "candidate metadata verification mode invalid",
+    )
+
     if versions.get("scheme") == "semver":
         require(
             semver_key(str(candidate.get("version", ""))) > semver_key(str(rollback.get("version", ""))),
@@ -163,8 +172,27 @@ def validate_manifest(manifest: dict) -> None:
         require("docker.sock" not in source and "docker.sock" not in destination, "Docker socket mount blocked")
         sha = mount.get("sha256")
         if mount.get("type") == "bind":
-            require(isinstance(source, str) and source.startswith("/"), "bind source must be absolute")
-            require(SHA_RE.fullmatch(str(sha or "")) is not None, "bind mount must carry a SHA-256 invariant")
+            require(
+                isinstance(source, str) and source.startswith("/"),
+                "bind source must be absolute",
+            )
+
+            source_kind = mount.get("source_kind", "file")
+            require(
+                source_kind in {"file", "directory"},
+                "bind source_kind must be file or directory",
+            )
+
+            if source_kind == "file":
+                require(
+                    SHA_RE.fullmatch(str(sha or "")) is not None,
+                    "file bind mount must carry a SHA-256 invariant",
+                )
+            else:
+                require(
+                    sha is None,
+                    "directory bind mount must use sha256 null",
+                )
 
     compose_exec = runtime.get("compose_execution") or {}
     require(compose_exec.get("no_deps") is True, "Compose --no-deps required")
@@ -218,7 +246,10 @@ def main() -> int:
             print("INFO: jsonschema package unavailable; running invariant validator only")
         else:
             jsonschema.Draft202012Validator.check_schema(schema)
-            jsonschema.Draft202012Validator(schema).validate(manifest)
+            try:
+                jsonschema.Draft202012Validator(schema).validate(manifest)
+            except jsonschema.ValidationError as exc:
+                fail(f"JSON Schema validation: {exc.message}")
             print("PASS: JSON Schema validation")
 
     validate_manifest(manifest)

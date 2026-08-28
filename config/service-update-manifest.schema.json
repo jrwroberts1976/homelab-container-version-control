@@ -100,6 +100,9 @@
             "platform_manifest_digest": { "$ref": "#/$defs/digest" },
             "config_digest": { "$ref": "#/$defs/digest" },
             "revision": { "type": "string", "minLength": 1 },
+            "metadata_verification": {
+              "enum": ["oci-labels", "digest-pinned"]
+            },
             "created": { "type": "string", "format": "date-time" },
             "platform": { "$ref": "#/$defs/platform" }
           }
@@ -154,6 +157,9 @@
               "source": { "type": "string", "minLength": 1 },
               "destination": { "type": "string", "pattern": "^/" },
               "rw": { "type": "boolean" },
+              "source_kind": {
+                "enum": ["file", "directory"]
+              },
               "sha256": {
                 "anyOf": [ { "$ref": "#/$defs/sha256" }, { "type": "null" } ]
               }
