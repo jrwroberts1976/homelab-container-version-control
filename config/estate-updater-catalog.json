@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "artifact": "estate-updater-catalog",
+  "hosts": {
+    "TestServer": {
+      "backend": "docker-compose-stage6",
+      "platform": "linux/arm64",
+      "backend_available": true
+    },
+    "ids-01": {
+      "backend": "docker-compose-stage6",
+      "platform": "linux/amd64",
+      "backend_available": false
+    },
+    "k3s-node-01": {
+      "backend": "kubernetes-stage6",
+      "platform": "linux/arm64",
+      "backend_available": false
+    }
+  },
+  "services": {
+    "alloy": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "1.18.0", "configured_image": "grafana/alloy:v1.18.0", "coverage": "pending-onboarding", "class": "readonly-docker-socket", "inspect_ready": false}
+      }
+    },
+    "authelia": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "4.39.20", "configured_image": "authelia/authelia:4.39.20", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "autokuma": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.0.0", "configured_image": "ghcr.io/bigboot/autokuma@sha256:8acbd3ad3ec8cb6c066aa0ee541154921283ec78159015937128541921c47974", "coverage": "pending-onboarding", "class": "readonly-docker-socket", "inspect_ready": false}
+      }
+    },
+    "birdnet-exporter": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": null, "configured_image": "birdnet-go-birdnet-exporter:local", "coverage": "pending-framework", "class": "local-build", "inspect_ready": false}
+      }
+    },
+    "birdnet-go": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "20260716", "configured_image": "ghcr.io/tphakala/birdnet-go:20260716", "coverage": "pending-framework", "class": "device-backed", "inspect_ready": false}
+      }
+    },
+    "blackbox-exporter": {
+      "desired_version": "0.28.0",
+      "hosts": {
+        "TestServer": {"current_version": "0.28.0", "configured_image": "prom/blackbox-exporter:v0.28.0", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false},
+        "ids-01": {"current_version": "0.28.0", "configured_image": "prom/blackbox-exporter:v0.28.0", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "cadvisor": {
+      "desired_version": "0.60.5",
+      "hosts": {
+        "TestServer": {"current_version": "0.60.5", "configured_image": "ghcr.io/google/cadvisor:0.60.5", "coverage": "pending-framework", "class": "privileged-device", "inspect_ready": false},
+        "ids-01": {"current_version": "0.60.5", "configured_image": "ghcr.io/google/cadvisor:0.60.5", "coverage": "pending-framework", "class": "privileged-device", "inspect_ready": false}
+      }
+    },
+    "cloudflare-ddns": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "1.17.0", "configured_image": "favonia/cloudflare-ddns:1.17.0", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "crowdsec": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "1.7.8", "configured_image": "crowdsecurity/crowdsec:v1.7.8", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "crowdsec-exporter": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": null, "configured_image": "monitoring-crowdsec-exporter:local", "coverage": "pending-framework", "class": "host-network-local-build", "inspect_ready": false}
+      }
+    },
+    "dashy": {
+      "desired_version": "4.6.0",
+      "hosts": {
+        "TestServer": {"current_version": "4.6.0", "configured_image": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59", "coverage": "managed-tested", "class": "standard-registry", "manifest": "dashy-4.6.0.json", "inspect_ready": false, "blocker": "authority-roll-forward-required"}
+      }
+    },
+    "dozzle": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "10.7.2", "configured_image": "amir20/dozzle:v10.7.2", "coverage": "pending-onboarding", "class": "readonly-docker-socket", "inspect_ready": false}
+      }
+    },
+    "duckdns": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "af6dcae5-ls86", "configured_image": "lscr.io/linuxserver/duckdns:af6dcae5-ls86", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "engineering-portfolio": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": null, "configured_image": "james-roberts/engineering-portfolio:local", "coverage": "pending-framework", "class": "local-build", "inspect_ready": false}
+      }
+    },
+    "filebrowser": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.63.23", "configured_image": "filebrowser/filebrowser:v2.63.23", "coverage": "pending-onboarding", "class": "stateful-registry", "inspect_ready": false}
+      }
+    },
+    "homepage": {
+      "desired_version": "2.1.2",
+      "hosts": {
+        "TestServer": {"current_version": "2.1.2", "configured_image": "ghcr.io/gethomepage/homepage@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60", "coverage": "managed-tested", "class": "readonly-docker-socket", "manifest": "homepage-2.1.2.json", "inspect_ready": true}
+      }
+    },
+    "jenkins": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.568.2", "configured_image": "homelab-jenkins:lts-jdk21", "coverage": "pending-framework", "class": "local-build-control-plane", "inspect_ready": false, "blocker": "persistent-authority-path-and-controller-update-path-required"}
+      }
+    },
+    "jenkins-docker": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": null, "configured_image": "docker:dind", "coverage": "pinned-manual", "class": "privileged-control-plane", "inspect_ready": false}
+      }
+    },
+    "librespeed": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "6.2.1", "configured_image": "ghcr.io/librespeed/speedtest:6.2.1", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "loki": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.9.6", "configured_image": "grafana/loki:2.9.6", "coverage": "pending-framework", "class": "stateful-log-store", "inspect_ready": false},
+        "ids-01": {"current_version": "3.7.6", "configured_image": "grafana/loki:3.7.6", "coverage": "pending-framework", "class": "stateful-log-store", "inspect_ready": false}
+      }
+    },
+    "maintenance-page": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": null, "configured_image": "nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "nebula-sync": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "0.11.2", "configured_image": "ghcr.io/lovelaze/nebula-sync:v0.11.2", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "node-exporter": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "1.12.1", "configured_image": "prom/node-exporter:v1.12.1", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false}
+      }
+    },
+    "npm": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.15.0", "configured_image": "jc21/nginx-proxy-manager:2.15.0", "coverage": "pending-framework", "class": "proxy-critical-stateful", "inspect_ready": false}
+      }
+    },
+    "portainer": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.44.0", "configured_image": "portainer/portainer-ce:2.44.0", "coverage": "pending-framework", "class": "writable-docker-socket", "inspect_ready": false}
+      }
+    },
+    "portainer-agent": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.44.0", "configured_image": "portainer/agent:2.44.0", "coverage": "pending-framework", "class": "writable-docker-socket", "inspect_ready": false}
+      }
+    },
+    "projects-jrwroberts-co-uk": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": null, "configured_image": "projects-jrwroberts-co-uk-projects-site:local", "coverage": "pending-framework", "class": "local-build", "inspect_ready": false}
+      }
+    },
+    "prometheus": {
+      "desired_version": "3.13.2",
+      "hosts": {
+        "TestServer": {"current_version": "3.13.2", "configured_image": "prom/prometheus@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69", "coverage": "managed-tested", "class": "standard-registry", "manifest": "prometheus-3.13.2.json", "inspect_ready": false, "blocker": "authority-roll-forward-required"},
+        "ids-01": {"current_version": "3.13.1", "configured_image": "prom/prometheus:v3.13.1", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false, "blocker": "ids-01-stage6-inspector-not-installed"}
+      }
+    },
+    "smokeping": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "2.9.0-r0-ls181", "configured_image": "linuxserver/smokeping:latest", "coverage": "pending-framework", "class": "floating-tag", "inspect_ready": false}
+      }
+    },
+    "uptime-kuma": {
+      "desired_version": null,
+      "hosts": {
+        "TestServer": {"current_version": "1.23.16", "configured_image": "louislam/uptime-kuma:1.23.16", "coverage": "pending-onboarding", "class": "stateful-registry", "inspect_ready": false}
+      }
+    },
+    "wud": {
+      "desired_version": "8",
+      "hosts": {
+        "TestServer": {"current_version": "8", "configured_image": "getwud/wud:8", "coverage": "pending-framework", "class": "writable-docker-socket", "inspect_ready": false},
+        "ids-01": {"current_version": "8", "configured_image": "getwud/wud:8", "coverage": "pending-onboarding", "class": "readonly-docker-socket", "inspect_ready": false}
+      }
+    },
+    "grafana": {
+      "desired_version": "13.2.0",
+      "hosts": {
+        "ids-01": {"current_version": "13.2.0", "configured_image": "grafana/grafana:13.2.0", "coverage": "pending-framework", "class": "stateful-migration-risk", "inspect_ready": false}
+      }
+    },
+    "greenbone-gsad": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "27.1.0", "configured_image": "registry.community.greenbone.net/community/gsad:stable", "coverage": "pending-framework", "class": "greenbone-suite", "inspect_ready": false}
+      }
+    },
+    "greenbone-gvmd": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "26.36.1", "configured_image": "registry.community.greenbone.net/community/gvmd:stable", "coverage": "pending-framework", "class": "greenbone-suite", "inspect_ready": false}
+      }
+    },
+    "greenbone-nginx": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": null, "configured_image": "registry.community.greenbone.net/community/nginx:latest", "coverage": "pending-framework", "class": "greenbone-suite-floating-tag", "inspect_ready": false}
+      }
+    },
+    "greenbone-openvasd": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "23.50.14", "configured_image": "registry.community.greenbone.net/community/openvas-scanner:stable", "coverage": "pending-framework", "class": "greenbone-suite", "inspect_ready": false}
+      }
+    },
+    "greenbone-ospd-openvas": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "22.10.4-amd64", "configured_image": "registry.community.greenbone.net/community/ospd-openvas:stable", "coverage": "pending-framework", "class": "greenbone-suite", "inspect_ready": false}
+      }
+    },
+    "greenbone-pg-gvm": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "22.6.18", "configured_image": "registry.community.greenbone.net/community/pg-gvm:stable", "coverage": "pending-framework", "class": "greenbone-suite-database", "inspect_ready": false}
+      }
+    },
+    "greenbone-redis-server": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": null, "configured_image": "registry.community.greenbone.net/community/redis-server", "coverage": "pending-framework", "class": "greenbone-suite", "inspect_ready": false}
+      }
+    },
+    "pihole-secondary": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "2026.07.2", "configured_image": "pihole/pihole:2026.07.2", "coverage": "pending-framework", "class": "dns-critical-stateful", "inspect_ready": false}
+      }
+    },
+    "pihole2-unbound": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": null, "configured_image": "debian:13-slim", "coverage": "pending-framework", "class": "dns-critical-configured-service", "inspect_ready": false}
+      }
+    },
+    "restic-server": {
+      "desired_version": null,
+      "hosts": {
+        "ids-01": {"current_version": "0.14.0", "configured_image": "restic/rest-server:0.14.0", "coverage": "pending-framework", "class": "backup-critical-stateful", "inspect_ready": false}
+      }
+    },
+    "whoami": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": null, "configured_image": "traefik/whoami@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44", "coverage": "pending-framework", "class": "kubernetes-user-workload", "namespace": "demo", "controller_kind": "Deployment", "controller_name": "whoami", "inspect_ready": false}
+      }
+    },
+    "homelab-defender": {
+      "desired_version": "15",
+      "hosts": {
+        "k3s-node-01": {"current_version": "15", "configured_image": "192.168.2.220:5000/homelab-defender:15", "coverage": "pending-framework", "class": "kubernetes-local-registry", "namespace": "homelab-defender-test", "controller_kind": "Deployment", "controller_name": "homelab-defender", "inspect_ready": false}
+      }
+    },
+    "kube-state-metrics": {
+      "desired_version": "2.19.1",
+      "hosts": {
+        "k3s-node-01": {"current_version": "2.19.1", "configured_image": "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.19.1", "coverage": "pending-framework", "class": "kubernetes-helm-monitoring", "namespace": "monitoring", "controller_kind": "Deployment", "controller_name": "kube-state-metrics", "inspect_ready": false}
+      }
+    },
+    "coredns": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "1.14.4", "configured_image": "rancher/mirrored-coredns-coredns:1.14.4", "coverage": "platform-managed", "class": "k3s-platform", "namespace": "kube-system", "controller_kind": "Deployment", "controller_name": "coredns", "inspect_ready": false}
+      }
+    },
+    "local-path-provisioner": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "0.0.36", "configured_image": "rancher/local-path-provisioner:v0.0.36", "coverage": "platform-managed", "class": "k3s-platform", "namespace": "kube-system", "controller_kind": "Deployment", "controller_name": "local-path-provisioner", "inspect_ready": false}
+      }
+    },
+    "metrics-server": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "0.8.1", "configured_image": "rancher/mirrored-metrics-server:v0.8.1", "coverage": "platform-managed", "class": "k3s-platform", "namespace": "kube-system", "controller_kind": "Deployment", "controller_name": "metrics-server", "inspect_ready": false}
+      }
+    },
+    "traefik": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "3.7.4", "configured_image": "rancher/mirrored-library-traefik:3.7.4", "coverage": "platform-managed", "class": "k3s-helm-platform", "namespace": "kube-system", "controller_kind": "Deployment", "controller_name": "traefik", "inspect_ready": false}
+      }
+    },
+    "metallb-controller": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "0.16.1", "configured_image": "quay.io/metallb/controller:v0.16.1", "coverage": "pinned-manual", "class": "kubernetes-network-critical-helm", "namespace": "metallb-system", "controller_kind": "Deployment", "controller_name": "metallb-controller", "inspect_ready": false}
+      }
+    },
+    "metallb-frr-k8s": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "0.0.25", "configured_image": "quay.io/metallb/frr-k8s:v0.0.25", "coverage": "pinned-manual", "class": "kubernetes-network-critical-hostnetwork", "namespace": "metallb-system", "controller_kind": "DaemonSet", "controller_name": "metallb-frr-k8s", "inspect_ready": false}
+      }
+    },
+    "metallb-speaker": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "0.16.1", "configured_image": "quay.io/metallb/speaker:v0.16.1", "coverage": "pinned-manual", "class": "kubernetes-network-critical-hostnetwork", "namespace": "metallb-system", "controller_kind": "DaemonSet", "controller_name": "metallb-speaker", "inspect_ready": false}
+      }
+    },
+    "metallb-frr-k8s-statuscleaner": {
+      "desired_version": null,
+      "hosts": {
+        "k3s-node-01": {"current_version": "0.0.25", "configured_image": "quay.io/metallb/frr-k8s:v0.0.25", "coverage": "pinned-manual", "class": "kubernetes-network-critical-hostnetwork", "namespace": "metallb-system", "controller_kind": "Deployment", "controller_name": "metallb-frr-k8s-statuscleaner", "inspect_ready": false}
+      }
+    }
+  }
+}
