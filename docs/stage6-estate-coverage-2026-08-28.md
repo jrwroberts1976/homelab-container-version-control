@@ -98,6 +98,12 @@ The ids-01 instance may fit the already-proven medium-risk read-only socket cont
 
 The Jenkins Compose project currently exposes two historical Compose working-directory labels, including a `/var/tmp/...` path from the prior Python-enabled Jenkins image work. No Stage 6 authority manifest should adopt a temporary worktree path. Jenkins/Jenkins-DinD onboarding must first normalize and prove the intended persistent authority path.
 
+### Steady-state inspection note
+
+A successful Stage 6 deployment does not make its consumed transition manifest a reusable steady-state inspection contract. The current generic Stage 6 inspector is intentionally pre-approval oriented and expects the live container to match the manifest's reviewed rollback identity. After a successful deployment, the live workload matches the candidate identity instead.
+
+Therefore `managed-tested` and `inspect-ready` are separate states. Homepage is managed/tested at 2.1.2 but its consumed `2.0.0 -> 2.1.2` transition manifest must not be fed back into the unchanged pre-approval inspector. The estate updater needs a dedicated steady-state inspection contract before any host-contact adapter is enabled.
+
 ## ids-01 — Docker Compose / linux/amd64
 
 | Service | Current image | Coverage | Class / reason |
@@ -170,8 +176,8 @@ An `argocd` namespace exists, but the cluster currently reports no `argoproj.io`
 
 1. Keep all three hosts in the reviewed estate catalogue from the first commit.
 2. Implement only caller-input validation and read-only routing-plan generation first; no host contact.
-3. Add the existing TestServer Stage 6 inspector as the first execution adapter.
-4. Add ids-01 Stage 6 inspector transport/authority and prove Prometheus 3.13.2 on amd64.
+3. Add a steady-state TestServer inspection contract before host contact. The existing Stage 6 inspector is a transition/pre-approval inspector and deliberately expects the live rollback image, so it must not be reused unchanged after a consumed deployment.
+4. Add ids-01 read-only inspection transport/authority and prove Prometheus 3.13.2 on amd64 only after the same steady-state distinction is explicit.
 5. Add a Kubernetes read-only inspection adapter for `k3s-node-01`, beginning with digest-pinned `demo/whoami`.
 6. Expand workload classes only through explicit reviewed contracts and regression tests.
 
