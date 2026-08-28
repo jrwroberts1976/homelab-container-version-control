@@ -46,6 +46,48 @@ if grep -Eiq '\b(dashy|prometheus)\b' Jenkinsfile.stage6-service-update; then
 fi
 printf 'PASS: no onboarded service is hard-coded in the generic pipeline\n'
 
+printf '\n===== RUNTIME JSON CANONICALIZATION =====\n'
+
+canonical_count="$(
+    grep -c 'jq -S -c' \
+        ops/testserver/homelab-stage6-inspect ||
+    true
+)"
+
+[ "$canonical_count" -ge 4 ] ||
+    fail "generic inspector does not canonicalise all runtime JSON comparisons"
+
+expected_ports='[
+  {
+    "container_port": 9090,
+    "host_ip": "192.168.2.220",
+    "host_port": 9090,
+    "protocol": "tcp"
+  }
+]'
+
+actual_ports='[
+  {
+    "host_ip": "192.168.2.220",
+    "host_port": 9090,
+    "container_port": 9090,
+    "protocol": "tcp"
+  }
+]'
+
+expected_canonical="$(
+    jq -S -c . <<<"$expected_ports"
+)"
+
+actual_canonical="$(
+    jq -S -c . <<<"$actual_ports"
+)"
+
+[ "$expected_canonical" = "$actual_canonical" ] ||
+    fail "canonical JSON regression test failed"
+
+printf 'PASS: JSON object key order does not create false runtime drift\n'
+
 printf '\n===== PATCH HYGIENE =====\n'
 git diff --check
 printf 'PASS: git diff --check\n'
