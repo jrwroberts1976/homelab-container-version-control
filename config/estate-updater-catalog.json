@@ -114,7 +114,7 @@
     "homepage": {
       "desired_version": "2.1.2",
       "hosts": {
-        "TestServer": {"current_version": "2.1.2", "configured_image": "ghcr.io/gethomepage/homepage@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60", "coverage": "managed-tested", "class": "readonly-docker-socket", "manifest": "homepage-2.1.2.json", "inspect_ready": true}
+        "TestServer": {"current_version": "2.1.2", "configured_image": "ghcr.io/gethomepage/homepage@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60", "coverage": "managed-tested", "class": "readonly-docker-socket", "manifest": "homepage-2.1.2.json", "inspect_ready": false, "blocker": "consumed-transition-manifest-requires-steady-state-inspector"}
       }
     },
     "jenkins": {
