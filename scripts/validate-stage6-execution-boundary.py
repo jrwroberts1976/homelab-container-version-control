@@ -238,6 +238,14 @@ def validate_wrapper(path: Path) -> None:
         'exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy',
         '"disarm dashy")',
         'exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy',
+        '"arm prometheus")',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus',
+        '"deploy prometheus")',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus',
+        '"rollback prometheus")',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus',
+        '"disarm prometheus")',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus',
         'FAIL: command not permitted',
     ]
     for needle in required:
@@ -251,10 +259,28 @@ def validate_wrapper(path: Path) -> None:
     require("bash -c" not in normalized and "sh -c" not in normalized, "executor wrapper must not spawn arbitrary shell commands")
 
     sudo_lines = [line.strip() for line in text.splitlines() if "exec sudo -n" in line]
-    require(len(sudo_lines) == 4, f"expected exactly four literal sudo execution lines, found {len(sudo_lines)}")
+
+    expected_sudo_lines = [
+        "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm dashy",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus",
+        "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus",
+    ]
+
+    require(
+        sudo_lines == expected_sudo_lines,
+        "executor wrapper sudo surface must be exactly Dashy and Prometheus",
+    )
+
     for line in sudo_lines:
-        require("dashy" in line, f"executor sudo line is not Dashy-only: {line}")
-        require("$" not in line, f"executor sudo line contains variable expansion: {line}")
+        require(
+            "$" not in line,
+            f"executor sudo line contains variable expansion: {line}",
+        )
 
 
 def main() -> int:

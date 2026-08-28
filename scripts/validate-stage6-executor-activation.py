@@ -30,8 +30,15 @@ def validate_sudoers(path: Path) -> None:
         "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute deploy dashy",
         "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute rollback dashy",
         "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition disarm dashy",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition arm prometheus",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute deploy prometheus",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute rollback prometheus",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition disarm prometheus",
     ]
-    require(lines == expected, "sudoers boundary must contain exactly four literal Dashy commands")
+    require(
+        lines == expected,
+        "sudoers boundary must contain exactly eight literal Dashy/Prometheus commands",
+    )
 
     text = path.read_text(encoding="utf-8")
     significant = "\n".join(lines)
@@ -68,16 +75,28 @@ def validate_wrapper(path: Path) -> None:
         ('"deploy dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy"),
         ('"rollback dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy"),
         ('"disarm dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy"),
+        ('"arm prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus"),
+        ('"deploy prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus"),
+        ('"rollback prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus"),
+        ('"disarm prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus"),
     ]
     for case_token, sudo_token in expected_commands:
         require(case_token in text, f"wrapper literal case missing: {case_token}")
         require(sudo_token in text, f"wrapper literal sudo line missing: {sudo_token}")
 
     sudo_lines = [line.strip() for line in text.splitlines() if "exec sudo -n" in line]
-    require(len(sudo_lines) == 4, "wrapper must expose exactly four sudo execution lines")
+    expected_sudo_lines = [sudo_token for _, sudo_token in expected_commands]
+
+    require(
+        sudo_lines == expected_sudo_lines,
+        "wrapper must expose exactly the reviewed Dashy/Prometheus sudo lines",
+    )
+
     for line in sudo_lines:
-        require("dashy" in line, f"wrapper sudo line is not Dashy-only: {line}")
-        require("$" not in line, f"wrapper sudo line contains variable expansion: {line}")
+        require(
+            "$" not in line,
+            f"wrapper sudo line contains variable expansion: {line}",
+        )
 
     require('COMMAND="${SSH_ORIGINAL_COMMAND:-}"' in text, "wrapper must dispatch only SSH_ORIGINAL_COMMAND")
     require('FAIL: command not permitted' in text, "wrapper default rejection missing")

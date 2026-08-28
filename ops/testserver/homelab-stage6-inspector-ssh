@@ -13,6 +13,9 @@ case "$COMMAND" in
     "inspect dashy")
         exec sudo -n /usr/local/libexec/homelab-stage6-inspect dashy
         ;;
+    "inspect prometheus")
+        exec sudo -n /usr/local/libexec/homelab-stage6-inspect prometheus
+        ;;
     *)
         printf 'FAIL: command not permitted\n' >&2
         exit 2

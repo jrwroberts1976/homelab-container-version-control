@@ -31,6 +31,8 @@ required_wrapper = [
     'ping)',
     '"inspect dashy")',
     'exec sudo -n /usr/local/libexec/homelab-stage6-inspect dashy',
+    '"inspect prometheus")',
+    'exec sudo -n /usr/local/libexec/homelab-stage6-inspect prometheus',
     "printf 'FAIL: command not permitted\\n' >&2",
 ]
 for token in required_wrapper:
@@ -39,10 +41,11 @@ for token in required_wrapper:
 
 sudo_lines = [line.strip() for line in sudoers.splitlines() if line.strip() and not line.lstrip().startswith('#')]
 expected_sudo = [
-    'homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect dashy'
+    'homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect dashy',
+    'homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect prometheus',
 ]
 if sudo_lines != expected_sudo:
-    fail("sudoers must contain exactly one literal Dashy inspection command")
+    fail("sudoers must contain exactly two literal Dashy/Prometheus inspection commands")
 
 expected_authkey = (
     'restrict,from="172.30.255.250",command="/usr/local/sbin/homelab-stage6-inspector-ssh" '
@@ -63,13 +66,28 @@ for text, label in ((wrapper, 'wrapper'), (sudoers, 'sudoers'), (authkey, 'autho
         if forbidden in lowered:
             fail(f"{label} contains forbidden token: {forbidden.strip()}")
 
-# The wrapper may invoke sudo only once, for the exact read-only inspector command.
+# The wrapper may invoke sudo only for the exact reviewed read-only inspector commands.
 sudo_calls = re.findall(r'\bsudo\b[^\n]*', wrapper)
-if sudo_calls != ['sudo -n /usr/local/libexec/homelab-stage6-inspect dashy']:
-    fail("wrapper sudo surface is not exactly one read-only Dashy inspection command")
+expected_sudo_calls = [
+    'sudo -n /usr/local/libexec/homelab-stage6-inspect dashy',
+    'sudo -n /usr/local/libexec/homelab-stage6-inspect prometheus',
+]
+if sudo_calls != expected_sudo_calls:
+    fail("wrapper sudo surface is not exactly the reviewed Dashy/Prometheus inspection commands")
 
 # Do not permit execution actions or variable service forwarding.
-for forbidden in ('arm dashy', 'deploy dashy', 'rollback dashy', 'disarm dashy', '$SERVICE', '${SERVICE'):
+for forbidden in (
+    'arm dashy',
+    'deploy dashy',
+    'rollback dashy',
+    'disarm dashy',
+    'arm prometheus',
+    'deploy prometheus',
+    'rollback prometheus',
+    'disarm prometheus',
+    '$SERVICE',
+    '${SERVICE',
+):
     if forbidden in wrapper or forbidden in sudoers:
         fail(f"execution/service-variable authority present: {forbidden}")
 
