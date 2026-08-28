@@ -175,23 +175,37 @@ def validate_manifest(manifest: dict) -> None:
     require(networks and len(networks) == len(set(networks)), "runtime networks must be non-empty and unique")
     require(runtime.get("privileged") is False, "privileged containers are not eligible")
     require(runtime.get("devices_allowed") is False, "device access is not eligible")
-    require(runtime.get("docker_socket_allowed") is False, "Docker socket access is not eligible")
 
-    for mount in runtime.get("mounts") or []:
+    docker_socket_allowed = runtime.get("docker_socket_allowed")
+
+    require(
+        isinstance(docker_socket_allowed, bool),
+        "runtime.docker_socket_allowed must be boolean",
+    )
+
+    mounts = runtime.get("mounts") or []
+    socket_mounts = []
+    docker_socket_named_mounts = []
+
+    for mount in mounts:
         source = str(mount.get("source", ""))
         destination = str(mount.get("destination", ""))
-        require("docker.sock" not in source and "docker.sock" not in destination, "Docker socket mount blocked")
         sha = mount.get("sha256")
+
+        if "docker.sock" in source or "docker.sock" in destination:
+            docker_socket_named_mounts.append(mount)
+
         if mount.get("type") == "bind":
             require(
-                isinstance(source, str) and source.startswith("/"),
+                source.startswith("/"),
                 "bind source must be absolute",
             )
 
             source_kind = mount.get("source_kind", "file")
+
             require(
-                source_kind in {"file", "directory"},
-                "bind source_kind must be file or directory",
+                source_kind in {"file", "directory", "socket"},
+                "bind source_kind must be file, directory or socket",
             )
 
             if source_kind == "file":
@@ -199,11 +213,80 @@ def validate_manifest(manifest: dict) -> None:
                     SHA_RE.fullmatch(str(sha or "")) is not None,
                     "file bind mount must carry a SHA-256 invariant",
                 )
-            else:
+
+            elif source_kind == "directory":
                 require(
                     sha is None,
                     "directory bind mount must use sha256 null",
                 )
+
+            else:
+                require(
+                    sha is None,
+                    "socket bind mount must use sha256 null",
+                )
+
+                socket_mounts.append(mount)
+
+        else:
+            require(
+                mount.get("source_kind") != "socket",
+                "socket source_kind requires a bind mount",
+            )
+
+    if docker_socket_allowed:
+        require(
+            service.get("risk_class") == "medium",
+            "Docker socket eligibility requires medium risk class",
+        )
+
+        require(
+            len(socket_mounts) == 1,
+            "Docker socket eligibility requires exactly one socket bind mount",
+        )
+
+        socket_mount = socket_mounts[0]
+
+        require(
+            socket_mount.get("source") == "/var/run/docker.sock",
+            "Docker socket source must be exactly /var/run/docker.sock",
+        )
+
+        require(
+            socket_mount.get("destination") == "/var/run/docker.sock",
+            "Docker socket destination must be exactly /var/run/docker.sock",
+        )
+
+        require(
+            socket_mount.get("rw") is False,
+            "Docker socket mount must be read-only",
+        )
+
+        require(
+            socket_mount.get("source_kind") == "socket",
+            "Docker socket mount must use source_kind socket",
+        )
+
+        require(
+            socket_mount.get("sha256") is None,
+            "Docker socket mount must use sha256 null",
+        )
+
+        require(
+            len(docker_socket_named_mounts) == 1,
+            "only the exact reviewed Docker socket path is permitted",
+        )
+
+    else:
+        require(
+            not socket_mounts,
+            "socket bind mounts require docker_socket_allowed=true",
+        )
+
+        require(
+            not docker_socket_named_mounts,
+            "Docker socket mount blocked",
+        )
 
     compose_exec = runtime.get("compose_execution") or {}
     require(compose_exec.get("no_deps") is True, "Compose --no-deps required")

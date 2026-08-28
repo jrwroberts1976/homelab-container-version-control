@@ -159,7 +159,7 @@
               "destination": { "type": "string", "pattern": "^/" },
               "rw": { "type": "boolean" },
               "source_kind": {
-                "enum": ["file", "directory"]
+                "enum": ["file", "directory", "socket"]
               },
               "sha256": {
                 "anyOf": [ { "$ref": "#/$defs/sha256" }, { "type": "null" } ]
@@ -173,7 +173,7 @@
         "readonly_rootfs": { "type": "boolean" },
         "restart_policy": { "type": "string", "minLength": 1 },
         "devices_allowed": { "const": false },
-        "docker_socket_allowed": { "const": false },
+        "docker_socket_allowed": { "type": "boolean" },
         "compose_execution": {
           "type": "object",
           "additionalProperties": false,
