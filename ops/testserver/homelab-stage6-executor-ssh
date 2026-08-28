@@ -22,6 +22,18 @@ case "$COMMAND" in
     "disarm dashy")
         exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy
         ;;
+    "arm prometheus")
+        exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus
+        ;;
+    "deploy prometheus")
+        exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus
+        ;;
+    "rollback prometheus")
+        exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus
+        ;;
+    "disarm prometheus")
+        exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus
+        ;;
     *)
         printf 'FAIL: command not permitted\n' >&2
         exit 2
