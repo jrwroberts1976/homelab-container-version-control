@@ -1,0 +1,833 @@
+pipeline {
+  agent any
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  parameters {
+    string(
+      name: 'STAGE6_MANIFEST',
+      defaultValue: '',
+      description: 'Reviewed manifest filename under config/services'
+    )
+  }
+
+  environment {
+    STAGE6_HOST = '172.30.255.249'
+    STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
+    STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+    STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
+    STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
+    STAGE6_FRAMEWORK_BASE_COMMIT = '8d79398748044f2e6ba8475342bc408ed87f7cab'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Load reviewed manifest') {
+      steps {
+        script {
+          def manifestName = params.STAGE6_MANIFEST?.trim()
+
+          if (!manifestName || !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
+            error('STAGE6_MANIFEST must be one safe manifest filename ending in .json')
+          }
+
+          def manifestPath = "config/services/${manifestName}"
+          if (!fileExists(manifestPath)) {
+            error("Reviewed Stage 6 manifest not found: ${manifestPath}")
+          }
+
+          env.STAGE6_MANIFEST_PATH = manifestPath
+
+          sh '''
+            set -eu
+            set +x
+
+            python3 scripts/validate-stage6-service-manifest.py \
+              "$STAGE6_MANIFEST_PATH" \
+              --schema config/service-update-manifest.schema.json
+          '''
+
+          def raw = readFile(manifestPath)
+          def m = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          def service = m.service?.name?.toString()
+          if (!service || !(service ==~ /^[a-z0-9][a-z0-9-]*$/)) {
+            error('Manifest service name is not safe')
+          }
+
+          if (m.service?.container?.toString() != service ||
+              m.service?.compose?.service?.toString() != service ||
+              m.service?.host?.toString() != 'TestServer' ||
+              m.service?.image_type?.toString() != 'registry-image') {
+            error('Manifest service identity is outside the Stage 6 generic contract')
+          }
+
+          def rollback = m.versions?.rollback
+          def candidate = m.versions?.candidate
+          def candidateDigest = candidate?.index_digest?.toString()
+
+          if (!candidateDigest || !(candidateDigest ==~ /^sha256:[0-9a-f]{64}$/)) {
+            error('Manifest candidate index digest is invalid')
+          }
+
+          def healthStrategy = m.health?.strategy?.toString()
+          def healthResult
+          if (healthStrategy == 'docker-health') {
+            healthResult = m.health?.expected?.toString()
+          } else if (healthStrategy == 'http') {
+            healthResult = "http-${m.health?.expected_status}"
+          } else {
+            error('Manifest health strategy is unsupported')
+          }
+
+          env.STAGE6_SERVICE = service
+          env.STAGE6_UPDATE_ID = "stage6-${service}-${candidateDigest.substring(7)}"
+          env.STAGE6_AUTHORITY_COMMIT = m.authority?.revision?.toString()
+          env.STAGE6_COMPOSE_SHA256 = m.authority?.compose_sha256?.toString()
+
+          env.STAGE6_ROLLBACK_VERSION = rollback?.version?.toString()
+          env.STAGE6_ROLLBACK_REF = rollback?.immutable_ref?.toString()
+          env.STAGE6_ROLLBACK_IMAGE_ID = rollback?.local_image_id?.toString()
+          env.STAGE6_ROLLBACK_PLATFORM = "${rollback?.platform?.os}/${rollback?.platform?.architecture}"
+          env.STAGE6_ROLLBACK_TAG = "${rollback?.image_repository}:${rollback?.version}"
+
+          env.STAGE6_CANDIDATE_VERSION = candidate?.version?.toString()
+          env.STAGE6_CANDIDATE_REF = candidate?.immutable_ref?.toString()
+          env.STAGE6_CANDIDATE_IMAGE_ID = candidate?.config_digest?.toString()
+          env.STAGE6_CANDIDATE_PLATFORM_MANIFEST = candidate?.platform_manifest_digest?.toString()
+          env.STAGE6_CANDIDATE_REVISION = candidate?.revision?.toString()
+          env.STAGE6_CANDIDATE_METADATA_VERIFICATION = (candidate?.metadata_verification ?: 'oci-labels').toString()
+          env.STAGE6_CANDIDATE_PLATFORM = "${candidate?.platform?.os}/${candidate?.platform?.architecture}"
+
+          env.STAGE6_HEALTH_STRATEGY = healthStrategy
+          env.STAGE6_HEALTH_RESULT = healthResult
+          env.STAGE6_ARTIFACT_PREFIX = "artifacts/stage6-${service}"
+
+          env.STAGE6_MANIFEST_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum "$STAGE6_MANIFEST_PATH" | awk '{print $1}' '''
+          ).trim()
+
+          env.STAGE6_INSPECTOR_SOURCE_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum ops/testserver/homelab-stage6-inspect | awk '{print $1}' '''
+          ).trim()
+
+          echo("PASS: loaded reviewed Stage 6 manifest ${manifestName} for service ${service}")
+        }
+      }
+    }
+
+    stage('Source and host-key preflight') {
+      steps {
+        sh '''
+          set -eu
+          set +x
+
+          test -f ops/testserver/homelab-stage6-inspect
+          test -f ops/testserver/homelab-stage6-inspector-ssh
+          test -f ops/testserver/homelab-stage6-transition
+          test -f ops/testserver/homelab-stage6-execute
+          test -f ops/testserver/homelab-stage6-executor-ssh
+          test -f scripts/stage6-normalize-executor-key.sh
+          test -f scripts/validate-stage6-service-manifest.py
+          test -f "$STAGE6_MANIFEST_PATH"
+          test -s "$STAGE6_KNOWN_HOSTS"
+
+          printf '%s  %s\n' \
+            "$STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256" \
+            scripts/stage6-normalize-executor-key.sh | \
+          sha256sum -c - >/dev/null
+
+          git merge-base --is-ancestor "$STAGE6_FRAMEWORK_BASE_COMMIT" HEAD
+
+          git diff --quiet "$STAGE6_FRAMEWORK_BASE_COMMIT" -- \
+            ops/testserver/homelab-stage6-inspect \
+            ops/testserver/homelab-stage6-inspector-ssh \
+            ops/testserver/homelab-stage6-transition \
+            ops/testserver/homelab-stage6-execute \
+            ops/testserver/homelab-stage6-executor-ssh \
+            ops/testserver/homelab-stage6-inspector-sudoers \
+            ops/testserver/homelab-stage6-executor-sudoers \
+            scripts/validate-stage6-service-manifest.py
+
+          ssh-keygen \
+            -lf "$STAGE6_KNOWN_HOSTS" \
+            -E sha256 |
+          awk '{print $2}' |
+          grep -Fx "$STAGE6_HOSTKEY_FINGERPRINT" \
+            >/dev/null
+
+          install -d -m 0700 artifacts
+          rm -f "${STAGE6_ARTIFACT_PREFIX}"-*.json \
+                "${STAGE6_ARTIFACT_PREFIX}"-*.txt
+
+          echo "PASS: generic Stage 6 source dependencies and TestServer host key pinned"
+        '''
+      }
+    }
+
+    stage('Pre-approval inspection') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-inspector',
+            keyFileVariable: 'STAGE6_INSPECT_KEY',
+            usernameVariable: 'STAGE6_INSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_INSPECT_USER" = "homelab-stage6-inspector" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_INSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_INSPECT_USER@$STAGE6_HOST" \
+              "inspect $STAGE6_SERVICE" \
+              </dev/null \
+              > "${STAGE6_ARTIFACT_PREFIX}-inspection-before-approval.json"
+
+            test -s "${STAGE6_ARTIFACT_PREFIX}-inspection-before-approval.json"
+          '''
+        }
+      }
+    }
+
+    stage('Assert pre-approval artifact') {
+      steps {
+        script {
+          def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-inspection-before-approval.json")
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'service-update-inspection' ||
+              a.mode != 'stage6-preapproval-inspect' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.host != 'TestServer' ||
+              a.result != 'ready-for-human-review') {
+            error('Unexpected Stage 6 pre-approval inspection identity')
+          }
+
+          if (a.manifest_sha256 != env.STAGE6_MANIFEST_SHA256 ||
+              a.implementation?.inspector_sha256 != env.STAGE6_INSPECTOR_SOURCE_SHA256) {
+            error('Installed Stage 6 manifest/inspector does not match reviewed source')
+          }
+
+          if (a.authority?.revision != env.STAGE6_AUTHORITY_COMMIT ||
+              a.authority?.compose_sha256 != env.STAGE6_COMPOSE_SHA256 ||
+              a.authority?.live_matches_authority != true ||
+              a.authority?.checkout_clean != true) {
+            error('Stage 6 authority gate failed')
+          }
+
+          if (a.current?.state != 'rollback' ||
+              a.current?.configured_image != env.STAGE6_ROLLBACK_TAG) {
+            error('Current state is not the reviewed rollback baseline')
+          }
+
+          if (a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+              a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.rollback?.local_image_id != env.STAGE6_ROLLBACK_IMAGE_ID ||
+              a.rollback?.platform != env.STAGE6_ROLLBACK_PLATFORM ||
+              a.rollback?.local != true) {
+            error('Stage 6 rollback identity/local platform gate failed')
+          }
+
+          if (a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+              a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.candidate?.local_image_id != env.STAGE6_CANDIDATE_IMAGE_ID ||
+              a.candidate?.platform_manifest_digest != env.STAGE6_CANDIDATE_PLATFORM_MANIFEST ||
+              a.candidate?.revision != env.STAGE6_CANDIDATE_REVISION ||
+              a.candidate?.metadata_verification != env.STAGE6_CANDIDATE_METADATA_VERIFICATION ||
+              a.candidate?.platform != env.STAGE6_CANDIDATE_PLATFORM ||
+              a.candidate?.local != true) {
+            error('Stage 6 candidate identity/local platform gate failed')
+          }
+
+          if (a.runtime?.invariants != 'pass' ||
+              a.runtime?.health_strategy != env.STAGE6_HEALTH_STRATEGY ||
+              a.runtime?.health_result != env.STAGE6_HEALTH_RESULT) {
+            error('Stage 6 runtime/health gate failed')
+          }
+
+          if (a.approval?.required != true ||
+              a.approval?.granted != false ||
+              a.deployment?.allowed != false ||
+              a.deployment?.performed != false) {
+            error('Pre-approval authority state is not fail-closed')
+          }
+
+          def critical = [
+            schema_version: a.schema_version,
+            artifact: a.artifact,
+            mode: a.mode,
+            service: a.service,
+            host: a.host,
+            manifest_sha256: a.manifest_sha256,
+            implementation: a.implementation,
+            authority: a.authority,
+            current: a.current,
+            rollback: a.rollback,
+            candidate: a.candidate,
+            runtime: a.runtime,
+            protected_state: a.protected_state,
+            container_state: a.container_state,
+            approval: a.approval,
+            deployment: a.deployment,
+            result: a.result
+          ]
+
+          writeFile(
+            file: "${env.STAGE6_ARTIFACT_PREFIX}-critical-before-approval.json",
+            text: groovy.json.JsonOutput.prettyPrint(
+              groovy.json.JsonOutput.toJson(critical)
+            ) + '\n'
+          )
+
+          echo("PASS: exact Stage 6 ${env.STAGE6_SERVICE} identities and deployment=false proven before approval")
+        }
+      }
+    }
+
+    stage('Human approval') {
+      steps {
+        script {
+          timeout(time: 60, unit: 'MINUTES') {
+            def approver = input(
+              message: "Approve Stage 6 ${env.STAGE6_SERVICE} deployment?\n\n" +
+                       "Update ID: ${env.STAGE6_UPDATE_ID}\n" +
+                       "Current/Rollback: ${env.STAGE6_ROLLBACK_REF}\n" +
+                       "Candidate: ${env.STAGE6_CANDIDATE_REF}\n" +
+                       "No executor credential is bound until after a second read-only inspection proves zero drift.",
+              ok: 'Approve exact Stage 6 deployment',
+              submitter: 'james',
+              submitterParameter: 'APPROVED_BY'
+            )
+
+            env.STAGE6_APPROVED_BY = approver.toString()
+          }
+
+          if (env.STAGE6_APPROVED_BY != 'james') {
+            error('Stage 6 approval was not granted by the expected approver')
+          }
+
+          writeFile(
+            file: "${env.STAGE6_ARTIFACT_PREFIX}-approval.txt",
+            text: "approved_by=${env.STAGE6_APPROVED_BY}\nupdate_id=${env.STAGE6_UPDATE_ID}\nmanifest=${env.STAGE6_MANIFEST_PATH}\n"
+          )
+
+          echo("PASS: Stage 6 human approval granted by ${env.STAGE6_APPROVED_BY}")
+        }
+      }
+    }
+
+    stage('Re-inspect after approval') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-inspector',
+            keyFileVariable: 'STAGE6_REINSPECT_KEY',
+            usernameVariable: 'STAGE6_REINSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_REINSPECT_USER" = "homelab-stage6-inspector" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_REINSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_REINSPECT_USER@$STAGE6_HOST" \
+              "inspect $STAGE6_SERVICE" \
+              </dev/null \
+              > "${STAGE6_ARTIFACT_PREFIX}-inspection-after-approval.json"
+
+            test -s "${STAGE6_ARTIFACT_PREFIX}-inspection-after-approval.json"
+          '''
+        }
+      }
+    }
+
+    stage('Assert zero drift after approval') {
+      steps {
+        script {
+          def beforeRaw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-critical-before-approval.json")
+          def before = new groovy.json.JsonSlurperClassic().parseText(beforeRaw)
+          def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-inspection-after-approval.json")
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'service-update-inspection' ||
+              a.mode != 'stage6-preapproval-inspect' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.host != 'TestServer' ||
+              a.result != 'ready-for-human-review') {
+            error('Post-approval inspection identity changed')
+          }
+
+          if (a.approval?.required != true ||
+              a.approval?.granted != false ||
+              a.deployment?.allowed != false ||
+              a.deployment?.performed != false) {
+            error('Deployment authority appeared before executor binding')
+          }
+
+          def after = [
+            schema_version: a.schema_version,
+            artifact: a.artifact,
+            mode: a.mode,
+            service: a.service,
+            host: a.host,
+            manifest_sha256: a.manifest_sha256,
+            implementation: a.implementation,
+            authority: a.authority,
+            current: a.current,
+            rollback: a.rollback,
+            candidate: a.candidate,
+            runtime: a.runtime,
+            protected_state: a.protected_state,
+            container_state: a.container_state,
+            approval: a.approval,
+            deployment: a.deployment,
+            result: a.result
+          ]
+
+          writeFile(
+            file: "${env.STAGE6_ARTIFACT_PREFIX}-critical-after-approval.json",
+            text: groovy.json.JsonOutput.prettyPrint(
+              groovy.json.JsonOutput.toJson(after)
+            ) + '\n'
+          )
+
+          if (before != after) {
+            error('Critical Stage 6 state drifted between inspection and approval')
+          }
+
+          echo('PASS: second Stage 6 inspection exactly matches pre-approval critical state')
+        }
+      }
+    }
+
+    stage('Executor preflight after approval') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_EXECUTOR_PING_KEY',
+            usernameVariable: 'STAGE6_EXECUTOR_PING_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_EXECUTOR_PING_USER" = "homelab-stage6-executor" ]
+
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+            scripts/stage6-normalize-executor-key.sh \
+              "$STAGE6_EXECUTOR_PING_KEY" \
+              "$NORMALIZED_EXECUTOR_KEY" \
+              "$STAGE6_EXECUTOR_FINGERPRINT" \
+              > "${STAGE6_ARTIFACT_PREFIX}-executor-ping-key-validation.txt"
+
+            ssh \
+              -n \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_EXECUTOR_PING_USER@$STAGE6_HOST" \
+              ping \
+              </dev/null \
+              > "${STAGE6_ARTIFACT_PREFIX}-executor-ping.txt"
+
+            grep -Fx 'pong' "${STAGE6_ARTIFACT_PREFIX}-executor-ping.txt" >/dev/null
+          '''
+        }
+
+        echo('PASS: executor credential reachable only after approval and zero-drift reinspection')
+      }
+    }
+
+    stage('Arm exact update') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_ARM_KEY',
+            usernameVariable: 'STAGE6_ARM_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_ARM_USER" = "homelab-stage6-executor" ]
+
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+            scripts/stage6-normalize-executor-key.sh \
+              "$STAGE6_ARM_KEY" \
+              "$NORMALIZED_EXECUTOR_KEY" \
+              "$STAGE6_EXECUTOR_FINGERPRINT" \
+              > "${STAGE6_ARTIFACT_PREFIX}-arm-key-validation.txt"
+
+            ssh \
+              -n \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_ARM_USER@$STAGE6_HOST" \
+              "arm $STAGE6_SERVICE" \
+              </dev/null \
+              > "${STAGE6_ARTIFACT_PREFIX}-arm.json"
+
+            test -s "${STAGE6_ARTIFACT_PREFIX}-arm.json"
+          '''
+        }
+
+        script {
+          def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-arm.json")
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-transition' ||
+              a.action != 'arm' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.update_id != env.STAGE6_UPDATE_ID ||
+              a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+              a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+              a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.container_mutation_performed != false ||
+              a.deployment_authority != true ||
+              a.result != 'armed') {
+            error('Stage 6 arm artifact failed exact assertions')
+          }
+
+          echo("PASS: exact Stage 6 ${env.STAGE6_SERVICE} update armed after approval and zero-drift recheck")
+        }
+      }
+    }
+
+    stage('Deploy exact candidate') {
+      steps {
+        script {
+          int rc = 99
+
+          withCredentials([
+            sshUserPrivateKey(
+              credentialsId: 'homelab-stage6-testserver-executor',
+              keyFileVariable: 'STAGE6_DEPLOY_KEY',
+              usernameVariable: 'STAGE6_DEPLOY_USER'
+            )
+          ]) {
+            rc = sh(
+              returnStatus: true,
+              script: '''
+                set +x
+
+                [ "$STAGE6_DEPLOY_USER" = "homelab-stage6-executor" ] || exit 97
+
+                NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")" || exit 96
+                trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+                scripts/stage6-normalize-executor-key.sh \
+                  "$STAGE6_DEPLOY_KEY" \
+                  "$NORMALIZED_EXECUTOR_KEY" \
+                  "$STAGE6_EXECUTOR_FINGERPRINT" \
+                  > "${STAGE6_ARTIFACT_PREFIX}-deploy-key-validation.txt" || exit 96
+
+                ssh \
+                  -n \
+                  -i "$NORMALIZED_EXECUTOR_KEY" \
+                  -o IdentitiesOnly=yes \
+                  -o BatchMode=yes \
+                  -o PasswordAuthentication=no \
+                  -o KbdInteractiveAuthentication=no \
+                  -o ConnectTimeout=10 \
+                  -o StrictHostKeyChecking=yes \
+                  -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+                  "$STAGE6_DEPLOY_USER@$STAGE6_HOST" \
+                  "deploy $STAGE6_SERVICE" \
+                  </dev/null \
+                  > "${STAGE6_ARTIFACT_PREFIX}-deploy.json" \
+                  2> "${STAGE6_ARTIFACT_PREFIX}-deploy-error.txt"
+              '''
+            )
+          }
+
+          env.STAGE6_DEPLOY_RC = rc.toString()
+
+          if (rc == 96 || rc == 97) {
+            error(
+              "Stage 6 deploy was not attempted because the local executor " +
+              "credential gate failed with rc=${rc}. The update may remain " +
+              "armed, but the candidate is unconsumed because deploy SSH was " +
+              "never invoked. Rollback must not be attempted; controlled " +
+              "recovery only."
+            )
+          }
+
+          if (rc == 0) {
+            def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-deploy.json")
+            def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+            if (a.schema_version != 1 ||
+                a.artifact != 'stage6-execution-result' ||
+                a.action != 'deploy' ||
+                a.service != env.STAGE6_SERVICE ||
+                a.update_id != env.STAGE6_UPDATE_ID ||
+                a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+                a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+                a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+                a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+                a.health_result != env.STAGE6_HEALTH_RESULT ||
+                a.container_mutation_performed != true ||
+                a.unrelated_containers_unchanged != true ||
+                a.consumed != true ||
+                a.deployment_authority_remains_armed != true ||
+                a.result != 'deployed') {
+              error('Stage 6 deploy artifact failed exact assertions')
+            }
+
+            if (!(a.target?.container_id_before instanceof String) ||
+                !(a.target?.container_id_after instanceof String) ||
+                a.target.container_id_before == a.target.container_id_after) {
+              error('Stage 6 deploy target container identity did not change as expected')
+            }
+
+            echo("PASS: exact ${env.STAGE6_SERVICE} candidate deployed and host-side invariants passed")
+          } else {
+            echo("Stage 6 deploy command failed with rc=${rc}; reviewed rollback path will be attempted")
+          }
+        }
+      }
+    }
+
+    stage('Rollback on deploy failure') {
+      when {
+        expression {
+          return env.STAGE6_DEPLOY_RC != null &&
+                 env.STAGE6_DEPLOY_RC != '0' &&
+                 env.STAGE6_DEPLOY_RC != '96' &&
+                 env.STAGE6_DEPLOY_RC != '97'
+        }
+      }
+      steps {
+        script {
+          int rollbackRc = 99
+
+          withCredentials([
+            sshUserPrivateKey(
+              credentialsId: 'homelab-stage6-testserver-executor',
+              keyFileVariable: 'STAGE6_ROLLBACK_KEY',
+              usernameVariable: 'STAGE6_ROLLBACK_USER'
+            )
+          ]) {
+            rollbackRc = sh(
+              returnStatus: true,
+              script: '''
+                set +x
+
+                [ "$STAGE6_ROLLBACK_USER" = "homelab-stage6-executor" ] || exit 97
+
+                NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")" || exit 96
+                trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+                scripts/stage6-normalize-executor-key.sh \
+                  "$STAGE6_ROLLBACK_KEY" \
+                  "$NORMALIZED_EXECUTOR_KEY" \
+                  "$STAGE6_EXECUTOR_FINGERPRINT" \
+                  > "${STAGE6_ARTIFACT_PREFIX}-rollback-key-validation.txt" || exit 96
+
+                ssh \
+                  -n \
+                  -i "$NORMALIZED_EXECUTOR_KEY" \
+                  -o IdentitiesOnly=yes \
+                  -o BatchMode=yes \
+                  -o PasswordAuthentication=no \
+                  -o KbdInteractiveAuthentication=no \
+                  -o ConnectTimeout=10 \
+                  -o StrictHostKeyChecking=yes \
+                  -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+                  "$STAGE6_ROLLBACK_USER@$STAGE6_HOST" \
+                  "rollback $STAGE6_SERVICE" \
+                  </dev/null \
+                  > "${STAGE6_ARTIFACT_PREFIX}-rollback.json" \
+                  2> "${STAGE6_ARTIFACT_PREFIX}-rollback-error.txt"
+              '''
+            )
+          }
+
+          env.STAGE6_ROLLBACK_RC = rollbackRc.toString()
+
+          if (rollbackRc != 0) {
+            error(
+              'Stage 6 deploy failed and reviewed rollback did not succeed. ' +
+              'Execution remains armed/consumed for controlled manual recovery; no improvised Docker action is permitted.'
+            )
+          }
+
+          def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-rollback.json")
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-execution-result' ||
+              a.action != 'rollback' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.update_id != env.STAGE6_UPDATE_ID ||
+              a.rollback?.version != env.STAGE6_ROLLBACK_VERSION ||
+              a.rollback?.immutable_ref != env.STAGE6_ROLLBACK_REF ||
+              a.candidate?.version != env.STAGE6_CANDIDATE_VERSION ||
+              a.candidate?.immutable_ref != env.STAGE6_CANDIDATE_REF ||
+              a.health_result != env.STAGE6_HEALTH_RESULT ||
+              a.container_mutation_performed != true ||
+              a.unrelated_containers_unchanged != true ||
+              a.consumed != true ||
+              a.deployment_authority_remains_armed != true ||
+              a.result != 'rolled-back') {
+            error('Stage 6 rollback artifact failed exact assertions')
+          }
+
+          if (!(a.target?.container_id_before instanceof String) ||
+              !(a.target?.container_id_after instanceof String) ||
+              a.target.container_id_before == a.target.container_id_after) {
+            error('Stage 6 rollback target container identity did not change as expected')
+          }
+
+          echo("PASS: reviewed rollback restored exact ${env.STAGE6_SERVICE} rollback identity")
+        }
+      }
+    }
+
+    stage('Disarm terminal state') {
+      when {
+        expression {
+          return env.STAGE6_DEPLOY_RC == '0' || env.STAGE6_ROLLBACK_RC == '0'
+        }
+      }
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: 'homelab-stage6-testserver-executor',
+            keyFileVariable: 'STAGE6_DISARM_KEY',
+            usernameVariable: 'STAGE6_DISARM_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_DISARM_USER" = "homelab-stage6-executor" ]
+
+            NORMALIZED_EXECUTOR_KEY="$(mktemp "${WORKSPACE}/.stage6-executor-key.XXXXXX")"
+            trap 'rm -f "$NORMALIZED_EXECUTOR_KEY"' EXIT HUP INT TERM
+            scripts/stage6-normalize-executor-key.sh \
+              "$STAGE6_DISARM_KEY" \
+              "$NORMALIZED_EXECUTOR_KEY" \
+              "$STAGE6_EXECUTOR_FINGERPRINT" \
+              > "${STAGE6_ARTIFACT_PREFIX}-disarm-key-validation.txt"
+
+            ssh \
+              -n \
+              -i "$NORMALIZED_EXECUTOR_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_DISARM_USER@$STAGE6_HOST" \
+              "disarm $STAGE6_SERVICE" \
+              </dev/null \
+              > "${STAGE6_ARTIFACT_PREFIX}-disarm.json"
+
+            test -s "${STAGE6_ARTIFACT_PREFIX}-disarm.json"
+          '''
+        }
+
+        script {
+          def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-disarm.json")
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-transition' ||
+              a.action != 'disarm' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.update_id != env.STAGE6_UPDATE_ID ||
+              a.consumed != true ||
+              a.container_mutation_performed != false ||
+              a.deployment_authority != false ||
+              a.result != 'disarmed') {
+            error('Stage 6 disarm artifact failed exact assertions')
+          }
+
+          echo('PASS: one-shot Stage 6 execution authority disarmed')
+        }
+      }
+    }
+
+    stage('Final pipeline result') {
+      steps {
+        script {
+          if (env.STAGE6_DEPLOY_RC == '0') {
+            echo("STAGE 6 ${env.STAGE6_SERVICE} RESULT: DEPLOYED EXACT CANDIDATE AND DISARMED")
+          } else if (env.STAGE6_ROLLBACK_RC == '0') {
+            currentBuild.result = 'FAILURE'
+            echo("STAGE 6 ${env.STAGE6_SERVICE} RESULT: DEPLOY FAILED, EXACT ROLLBACK RESTORED AND DISARMED")
+          } else {
+            error('Stage 6 terminal state is unresolved')
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts(
+        artifacts: 'artifacts/stage6-*',
+        allowEmptyArchive: true,
+        fingerprint: true
+      )
+    }
+  }
+}
