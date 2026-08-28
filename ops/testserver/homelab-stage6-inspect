@@ -249,12 +249,12 @@ verify_runtime_shape() {
         fail "target network membership mismatch"
 
     expected_ports="$(
-        jq -c '.runtime.published_ports
+        jq -S -c '.runtime.published_ports
             | sort_by(.container_port, .protocol, .host_ip, .host_port)' \
             "$MANIFEST"
     )"
     actual_ports="$(
-        jq -c '
+        jq -S -c '
           [
             ((.[0].NetworkSettings.Ports // {}) | to_entries[]) as $entry
             | select($entry.value != null)
@@ -274,13 +274,13 @@ verify_runtime_shape() {
         fail "target published-port shape mismatch"
 
     expected_mounts="$(
-        jq -c '[.runtime.mounts[]
+        jq -S -c '[.runtime.mounts[]
             | {type, source, destination, rw}]
             | sort_by(.destination, .source)' \
             "$MANIFEST"
     )"
     actual_mounts="$(
-        jq -c '[.[0].Mounts[]
+        jq -S -c '[.[0].Mounts[]
             | {type: .Type, source: .Source, destination: .Destination, rw: .RW}]
             | sort_by(.destination, .source)' \
             <<<"$container_json"
