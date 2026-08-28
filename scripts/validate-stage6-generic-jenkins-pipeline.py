@@ -61,8 +61,15 @@ def main() -> int:
 
     require("@sha256:" not in text, "pipeline must not hard-code immutable image references")
 
+    # Human-readable recovery prose may mention Docker once, but the pipeline
+    # must not contain any additional Docker command surface.
+    require(
+        count(lowered, "docker ") == 1
+        and "no improvised docker action is permitted" in lowered,
+        "unexpected Docker command/prose surface present",
+    )
+
     forbidden = [
-        "docker ",
         "sudo ",
         "eval ",
         "bash -c",
