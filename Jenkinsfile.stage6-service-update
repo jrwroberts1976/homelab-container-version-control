@@ -140,6 +140,7 @@ pipeline {
           test -f ops/testserver/homelab-stage6-executor-ssh
           test -f scripts/stage6-normalize-executor-key.sh
           test -f scripts/validate-stage6-service-manifest.py
+          test -f config/service-update-manifest.schema.json
           test -f "$STAGE6_MANIFEST_PATH"
           test -s "$STAGE6_KNOWN_HOSTS"
 
@@ -158,6 +159,7 @@ pipeline {
             ops/testserver/homelab-stage6-executor-ssh \
             ops/testserver/homelab-stage6-inspector-sudoers \
             ops/testserver/homelab-stage6-executor-sudoers \
+            config/service-update-manifest.schema.json \
             scripts/validate-stage6-service-manifest.py
 
           ssh-keygen \

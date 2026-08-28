@@ -149,7 +149,7 @@ verify_runtime_shape() {
     local expected_image_id="$1" expected_config_image="$2"
     local container_json expected_networks actual_networks expected_ports actual_ports
     local expected_mounts actual_mounts expected_user expected_privileged expected_readonly expected_restart
-    local source source_kind expected_sha actual_sha
+    local source source_kind expected_sha actual_sha expected_docker_socket_allowed
 
     container_json="$(docker inspect "$TARGET_CONTAINER" 2>/dev/null)" || fail "target container unavailable"
     [ "$(jq -r '.[0].State.Running' <<<"$container_json")" = "true" ] || fail "target container is not running"
@@ -196,6 +196,17 @@ verify_runtime_shape() {
                     fail "persistent directory must not carry static SHA-256: $source"
                 ;;
 
+            socket)
+                [ "$source" = "/var/run/docker.sock" ] ||
+                    fail "socket bind source is not the reviewed Docker socket"
+
+                [ -S "$source" ] ||
+                    fail "reviewed Docker socket source is not a Unix socket"
+
+                [ -z "$expected_sha" ] ||
+                    fail "socket bind mount must not carry static SHA-256"
+                ;;
+
             *)
                 fail "unsupported bind-mount source kind: $source_kind"
                 ;;
@@ -222,7 +233,60 @@ verify_runtime_shape() {
     [ "$(jq -r '.[0].HostConfig.ReadonlyRootfs' <<<"$container_json")" = "$expected_readonly" ] || fail "target read-only rootfs state mismatch"
     [ "$(jq -r '.[0].HostConfig.RestartPolicy.Name' <<<"$container_json")" = "$expected_restart" ] || fail "target restart policy mismatch"
     [ "$(jq -r '.[0].HostConfig.Devices | length' <<<"$container_json")" = "0" ] || fail "target unexpectedly has device mappings"
-    jq -e '[.[0].Mounts[] | select((.Source|contains("docker.sock")) or (.Destination|contains("docker.sock")))] | length == 0' <<<"$container_json" >/dev/null || fail "target unexpectedly has Docker socket mount"
+    expected_docker_socket_allowed="$(
+        jq -r '.runtime.docker_socket_allowed' "$MANIFEST"
+    )"
+
+    case "$expected_docker_socket_allowed" in
+        true)
+            jq -e '
+              (
+                [
+                  .[0].Mounts[]
+                  | select(
+                      .Type == "bind"
+                      and .Source == "/var/run/docker.sock"
+                      and .Destination == "/var/run/docker.sock"
+                      and .RW == false
+                    )
+                ]
+                | length == 1
+              )
+              and
+              (
+                [
+                  .[0].Mounts[]
+                  | select(
+                      (.Source | contains("docker.sock"))
+                      or
+                      (.Destination | contains("docker.sock"))
+                    )
+                ]
+                | length == 1
+              )
+            ' <<<"$container_json" >/dev/null ||
+                fail "target Docker socket mount is not the exact reviewed read-only socket"
+            ;;
+
+        false)
+            jq -e '
+              [
+                .[0].Mounts[]
+                | select(
+                    (.Source | contains("docker.sock"))
+                    or
+                    (.Destination | contains("docker.sock"))
+                  )
+              ]
+              | length == 0
+            ' <<<"$container_json" >/dev/null ||
+                fail "target unexpectedly has Docker socket mount"
+            ;;
+
+        *)
+            fail "manifest Docker socket policy invalid"
+            ;;
+    esac
 }
 
 wait_for_health() {

@@ -97,6 +97,187 @@ actual_canonical="$(
 
 printf 'PASS: JSON object key order does not create false runtime drift\n'
 
+printf '\n===== READ-ONLY DOCKER SOCKET CONTRACT =====\n'
+
+python3 - <<'PYTEST'
+import copy
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+base = json.loads(
+    Path("config/services/dashy-4.6.0.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+socket_mount = {
+    "type": "bind",
+    "source": "/var/run/docker.sock",
+    "destination": "/var/run/docker.sock",
+    "rw": False,
+    "source_kind": "socket",
+    "sha256": None,
+}
+
+
+def validate_case(name, manifest, should_pass):
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".json",
+        delete=False,
+    ) as handle:
+        json.dump(manifest, handle)
+        handle.write("\n")
+        filename = Path(handle.name)
+
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "scripts/validate-stage6-service-manifest.py",
+                str(filename),
+                "--schema",
+                "config/service-update-manifest.schema.json",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        actual_pass = proc.returncode == 0
+
+        if actual_pass != should_pass:
+            print(f"FAIL: {name}")
+            print(proc.stdout)
+            print(proc.stderr, file=sys.stderr)
+            raise SystemExit(2)
+
+        result = "PASS" if should_pass else "REJECTED"
+        print(f"PASS: {name} -> {result}")
+
+    finally:
+        filename.unlink(missing_ok=True)
+
+
+safe = copy.deepcopy(base)
+safe["service"]["risk_class"] = "medium"
+safe["runtime"]["docker_socket_allowed"] = True
+safe["runtime"]["mounts"].append(
+    copy.deepcopy(socket_mount)
+)
+validate_case(
+    "exact medium-risk read-only Docker socket",
+    safe,
+    True,
+)
+
+low_risk = copy.deepcopy(safe)
+low_risk["service"]["risk_class"] = "low"
+validate_case(
+    "low-risk Docker socket",
+    low_risk,
+    False,
+)
+
+writable = copy.deepcopy(safe)
+writable["runtime"]["mounts"][-1]["rw"] = True
+validate_case(
+    "writable Docker socket",
+    writable,
+    False,
+)
+
+wrong_source = copy.deepcopy(safe)
+wrong_source["runtime"]["mounts"][-1][
+    "source"
+] = "/tmp/docker.sock"
+validate_case(
+    "alternate Docker socket source",
+    wrong_source,
+    False,
+)
+
+wrong_destination = copy.deepcopy(safe)
+wrong_destination["runtime"]["mounts"][-1][
+    "destination"
+] = "/tmp/docker.sock"
+validate_case(
+    "alternate Docker socket destination",
+    wrong_destination,
+    False,
+)
+
+wrong_kind = copy.deepcopy(safe)
+wrong_kind["runtime"]["mounts"][-1][
+    "source_kind"
+] = "file"
+wrong_kind["runtime"]["mounts"][-1][
+    "sha256"
+] = "0" * 64
+validate_case(
+    "Docker socket declared as file",
+    wrong_kind,
+    False,
+)
+
+disabled = copy.deepcopy(safe)
+disabled["runtime"]["docker_socket_allowed"] = False
+validate_case(
+    "socket present while policy disabled",
+    disabled,
+    False,
+)
+
+missing = copy.deepcopy(base)
+missing["service"]["risk_class"] = "medium"
+missing["runtime"]["docker_socket_allowed"] = True
+validate_case(
+    "socket policy enabled without mount",
+    missing,
+    False,
+)
+
+duplicate = copy.deepcopy(safe)
+duplicate["runtime"]["mounts"].append(
+    copy.deepcopy(socket_mount)
+)
+duplicate["runtime"]["mounts"][-1][
+    "destination"
+] = "/tmp/second-docker.sock"
+validate_case(
+    "multiple Docker socket mounts",
+    duplicate,
+    False,
+)
+
+print("PASS: Docker socket positive/negative contract complete")
+PYTEST
+
+for helper in \
+    ops/testserver/homelab-stage6-inspect \
+    ops/testserver/homelab-stage6-execute
+do
+    grep -F \
+        'target Docker socket mount is not the exact reviewed read-only socket' \
+        "$helper" >/dev/null ||
+        fail "exact runtime socket gate missing: $helper"
+
+    grep -F \
+        '[ -S "$source" ]' \
+        "$helper" >/dev/null ||
+        fail "Unix socket type gate missing: $helper"
+done
+
+grep -F \
+    'config/service-update-manifest.schema.json \' \
+    Jenkinsfile.stage6-service-update >/dev/null ||
+    fail "schema is absent from Jenkins framework drift gate"
+
+printf 'PASS: runtime helpers and Jenkins schema-drift protection present\n'
+
 printf '\n===== PATCH HYGIENE =====\n'
 git diff --check
 printf 'PASS: git diff --check\n'
