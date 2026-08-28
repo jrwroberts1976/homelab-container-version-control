@@ -26,25 +26,18 @@ def significant_lines(path: Path) -> list[str]:
 def validate_sudoers(path: Path) -> None:
     lines = significant_lines(path)
     expected = [
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition arm dashy",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute deploy dashy",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute rollback dashy",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition disarm dashy",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition arm prometheus",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute deploy prometheus",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute rollback prometheus",
-        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition disarm prometheus",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition ^arm [a-z0-9][a-z0-9-]*$",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-transition ^disarm [a-z0-9][a-z0-9-]*$",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute ^deploy [a-z0-9][a-z0-9-]*$",
+        "homelab-stage6-executor ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-execute ^rollback [a-z0-9][a-z0-9-]*$",
     ]
     require(
         lines == expected,
-        "sudoers boundary must contain exactly eight literal Dashy/Prometheus commands",
+        "sudoers boundary must contain exactly four generic action/service regex commands",
     )
 
     text = path.read_text(encoding="utf-8")
     significant = "\n".join(lines)
-
-    for token in ("*", "?", "[", "]", "$", "`", "\\"):
-        require(token not in significant, f"sudoers boundary contains forbidden metacharacter: {token}")
 
     forbidden_command = re.compile(
         r"(?:^|[\s,:])(?:/usr/bin/|/bin/)?(?:sh|bash|docker|compose|git|cp|mv|rm|tee|vi|vim|nano)(?=\s|$)"
@@ -57,6 +50,7 @@ def validate_sudoers(path: Path) -> None:
 
     require("NOPASSWD: ALL" not in text, "sudoers must not grant NOPASSWD: ALL")
     require("(ALL" not in text, "sudoers runas target must remain root only")
+    require("dashy" not in significant and "prometheus" not in significant, "sudoers must not hard-code services")
 
 
 def validate_authorized_key_template(path: Path) -> None:
@@ -70,37 +64,59 @@ def validate_authorized_key_template(path: Path) -> None:
 
 def validate_wrapper(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
-    expected_commands = [
-        ('"arm dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm dashy"),
-        ('"deploy dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy"),
-        ('"rollback dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy"),
-        ('"disarm dashy")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy"),
-        ('"arm prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus"),
-        ('"deploy prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus"),
-        ('"rollback prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus"),
-        ('"disarm prometheus")', "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus"),
+
+    required = [
+        'COMMAND="${SSH_ORIGINAL_COMMAND:-}"',
+        'require_service() {',
+        '[[ "$service" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail',
+        'arm\\ *|disarm\\ *)',
+        'deploy\\ *|rollback\\ *)',
+        'ACTION="${COMMAND%% *}"',
+        'SERVICE="${COMMAND#* }"',
+        'require_service "$SERVICE"',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"',
+        'FAIL: command not permitted',
     ]
-    for case_token, sudo_token in expected_commands:
-        require(case_token in text, f"wrapper literal case missing: {case_token}")
-        require(sudo_token in text, f"wrapper literal sudo line missing: {sudo_token}")
+    for token in required:
+        require(token in text, f"wrapper requirement missing: {token}")
+
+    require("dashy" not in text.lower() and "prometheus" not in text.lower(), "wrapper must not hard-code services")
+    require("docker " not in text.lower(), "executor wrapper must not call Docker directly")
+    require("git " not in text.lower(), "executor wrapper must not call Git directly")
+    require("eval " not in text.lower(), "executor wrapper must not use eval")
+    require("bash -c" not in text.lower() and "sh -c" not in text.lower(), "executor wrapper must not spawn arbitrary shell commands")
 
     sudo_lines = [line.strip() for line in text.splitlines() if "exec sudo -n" in line]
-    expected_sudo_lines = [sudo_token for _, sudo_token in expected_commands]
-
+    expected_sudo_lines = [
+        'exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"',
+    ]
     require(
         sudo_lines == expected_sudo_lines,
-        "wrapper must expose exactly the reviewed Dashy/Prometheus sudo lines",
+        "wrapper must expose exactly the generic transition and execution helpers",
     )
 
-    for line in sudo_lines:
-        require(
-            "$" not in line,
-            f"wrapper sudo line contains variable expansion: {line}",
-        )
+    transition_start = text.find('arm\\ *|disarm\\ *)')
+    execute_start = text.find('deploy\\ *|rollback\\ *)')
+    default_start = text.find('\n    *)', execute_start)
+    require(transition_start >= 0 and execute_start > transition_start, "generic action cases missing or reordered")
+    require(default_start > execute_start, "generic default reject case missing")
 
-    require('COMMAND="${SSH_ORIGINAL_COMMAND:-}"' in text, "wrapper must dispatch only SSH_ORIGINAL_COMMAND")
-    require('FAIL: command not permitted' in text, "wrapper default rejection missing")
-    require("$SERVICE" not in text and "$ACTION" not in text, "wrapper must not accept variable service/action selection")
+    transition_case = text[transition_start:execute_start]
+    execute_case = text[execute_start:default_start]
+    require('require_service "$SERVICE"' in transition_case, "transition service validation missing")
+    require(
+        transition_case.find('require_service "$SERVICE"')
+        < transition_case.find('exec sudo -n /usr/local/libexec/homelab-stage6-transition'),
+        "transition service validation must precede sudo",
+    )
+    require('require_service "$SERVICE"' in execute_case, "execution service validation missing")
+    require(
+        execute_case.find('require_service "$SERVICE"')
+        < execute_case.find('exec sudo -n /usr/local/libexec/homelab-stage6-execute'),
+        "execution service validation must precede sudo",
+    )
 
 
 def main() -> int:
@@ -114,7 +130,7 @@ def main() -> int:
     validate_authorized_key_template(args.authorized_key_template)
     validate_wrapper(args.wrapper)
 
-    print("PASS: Stage 6 executor activation source guard")
+    print("PASS: Stage 6 generic executor activation source guard")
     return 0
 
 

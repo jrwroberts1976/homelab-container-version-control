@@ -230,57 +230,64 @@ def validate_wrapper(path: Path) -> None:
 
     required = [
         'COMMAND="${SSH_ORIGINAL_COMMAND:-}"',
-        '"arm dashy")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-transition arm dashy',
-        '"deploy dashy")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy',
-        '"rollback dashy")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy',
-        '"disarm dashy")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy',
-        '"arm prometheus")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus',
-        '"deploy prometheus")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus',
-        '"rollback prometheus")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus',
-        '"disarm prometheus")',
-        'exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus',
+        'require_service() {',
+        '[[ "$service" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail',
+        'arm\\ *|disarm\\ *)',
+        'deploy\\ *|rollback\\ *)',
+        'ACTION="${COMMAND%% *}"',
+        'SERVICE="${COMMAND#* }"',
+        'require_service "$SERVICE"',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"',
         'FAIL: command not permitted',
     ]
     for needle in required:
         require(needle in text, f"executor wrapper invariant missing: {needle}")
 
-    require("$SERVICE" not in text, "executor wrapper must not accept variable service selection")
-    require("$ACTION" not in text, "executor wrapper must not accept variable action selection")
+    require("dashy" not in text.lower() and "prometheus" not in text.lower(), "executor wrapper must be service-agnostic")
     require("docker " not in normalized, "executor wrapper must not call Docker directly")
     require("git " not in normalized, "executor wrapper must not call Git directly")
     require("eval " not in normalized, "executor wrapper must not use eval")
     require("bash -c" not in normalized and "sh -c" not in normalized, "executor wrapper must not spawn arbitrary shell commands")
 
     sudo_lines = [line.strip() for line in text.splitlines() if "exec sudo -n" in line]
-
     expected_sudo_lines = [
-        "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm dashy",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus",
-        "exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus",
+        'exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"',
+        'exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"',
     ]
-
     require(
         sudo_lines == expected_sudo_lines,
-        "executor wrapper sudo surface must be exactly Dashy and Prometheus",
+        "executor wrapper sudo surface must be exactly the generic transition/execution helpers",
     )
 
-    for line in sudo_lines:
-        require(
-            "$" not in line,
-            f"executor sudo line contains variable expansion: {line}",
-        )
+    transition_start = text.find('arm\\ *|disarm\\ *)')
+    execute_start = text.find('deploy\\ *|rollback\\ *)')
+    default_start = text.find('\n    *)', execute_start)
+    require(transition_start >= 0 and execute_start > transition_start, "generic action cases missing or reordered")
+    require(default_start > execute_start, "generic default reject case missing")
+
+    transition_case = text[transition_start:execute_start]
+    execute_case = text[execute_start:default_start]
+    require_order(
+        transition_case,
+        [
+            'ACTION="${COMMAND%% *}"',
+            'SERVICE="${COMMAND#* }"',
+            'require_service "$SERVICE"',
+            'exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"',
+        ],
+        "wrapper transition dispatch",
+    )
+    require_order(
+        execute_case,
+        [
+            'ACTION="${COMMAND%% *}"',
+            'SERVICE="${COMMAND#* }"',
+            'require_service "$SERVICE"',
+            'exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"',
+        ],
+        "wrapper execution dispatch",
+    )
 
 
 def main() -> int:

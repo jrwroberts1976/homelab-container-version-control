@@ -6,36 +6,33 @@ export PATH
 
 COMMAND="${SSH_ORIGINAL_COMMAND:-}"
 
+fail() {
+    printf 'FAIL: command not permitted\n' >&2
+    exit 2
+}
+
+require_service() {
+    local service="$1"
+    [[ "$service" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
+}
+
 case "$COMMAND" in
     ping)
         printf 'pong\n'
         ;;
-    "arm dashy")
-        exec sudo -n /usr/local/libexec/homelab-stage6-transition arm dashy
+    arm\ *|disarm\ *)
+        ACTION="${COMMAND%% *}"
+        SERVICE="${COMMAND#* }"
+        require_service "$SERVICE"
+        exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"
         ;;
-    "deploy dashy")
-        exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy dashy
-        ;;
-    "rollback dashy")
-        exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback dashy
-        ;;
-    "disarm dashy")
-        exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm dashy
-        ;;
-    "arm prometheus")
-        exec sudo -n /usr/local/libexec/homelab-stage6-transition arm prometheus
-        ;;
-    "deploy prometheus")
-        exec sudo -n /usr/local/libexec/homelab-stage6-execute deploy prometheus
-        ;;
-    "rollback prometheus")
-        exec sudo -n /usr/local/libexec/homelab-stage6-execute rollback prometheus
-        ;;
-    "disarm prometheus")
-        exec sudo -n /usr/local/libexec/homelab-stage6-transition disarm prometheus
+    deploy\ *|rollback\ *)
+        ACTION="${COMMAND%% *}"
+        SERVICE="${COMMAND#* }"
+        require_service "$SERVICE"
+        exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"
         ;;
     *)
-        printf 'FAIL: command not permitted\n' >&2
-        exit 2
+        fail
         ;;
 esac
