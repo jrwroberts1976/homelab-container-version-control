@@ -29,23 +29,31 @@ authkey = authkey_path.read_text()
 required_wrapper = [
     'COMMAND="${SSH_ORIGINAL_COMMAND:-}"',
     'ping)',
-    '"inspect dashy")',
-    'exec sudo -n /usr/local/libexec/homelab-stage6-inspect dashy',
-    '"inspect prometheus")',
-    'exec sudo -n /usr/local/libexec/homelab-stage6-inspect prometheus',
+    'inspect\\ *)',
+    'SERVICE="${COMMAND#inspect }"',
+    '[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail',
+    'exec sudo -n /usr/local/libexec/homelab-stage6-inspect "$SERVICE"',
     "printf 'FAIL: command not permitted\\n' >&2",
 ]
 for token in required_wrapper:
     if token not in wrapper:
         fail(f"wrapper requirement missing: {token}")
 
-sudo_lines = [line.strip() for line in sudoers.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+validation_pos = wrapper.find('[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail')
+sudo_pos = wrapper.find('exec sudo -n /usr/local/libexec/homelab-stage6-inspect "$SERVICE"')
+if validation_pos < 0 or sudo_pos < 0 or validation_pos > sudo_pos:
+    fail("service identifier must be validated before sudo dispatch")
+
+sudo_lines = [
+    line.strip()
+    for line in sudoers.splitlines()
+    if line.strip() and not line.lstrip().startswith('#')
+]
 expected_sudo = [
-    'homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect dashy',
-    'homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect prometheus',
+    'homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect ^[a-z0-9][a-z0-9-]*$',
 ]
 if sudo_lines != expected_sudo:
-    fail("sudoers must contain exactly two literal Dashy/Prometheus inspection commands")
+    fail("sudoers must contain exactly the generic manifest-driven inspection regex")
 
 expected_authkey = (
     'restrict,from="172.30.255.250",command="/usr/local/sbin/homelab-stage6-inspector-ssh" '
@@ -66,29 +74,28 @@ for text, label in ((wrapper, 'wrapper'), (sudoers, 'sudoers'), (authkey, 'autho
         if forbidden in lowered:
             fail(f"{label} contains forbidden token: {forbidden.strip()}")
 
-# The wrapper may invoke sudo only for the exact reviewed read-only inspector commands.
+for service_literal in ('dashy', 'prometheus'):
+    if service_literal in wrapper.lower() or service_literal in sudoers.lower():
+        fail(f"transport must not hard-code onboarded service: {service_literal}")
+
+# The wrapper may invoke sudo only through the generic root-owned read-only inspector.
 sudo_calls = re.findall(r'\bsudo\b[^\n]*', wrapper)
 expected_sudo_calls = [
-    'sudo -n /usr/local/libexec/homelab-stage6-inspect dashy',
-    'sudo -n /usr/local/libexec/homelab-stage6-inspect prometheus',
+    'sudo -n /usr/local/libexec/homelab-stage6-inspect "$SERVICE"',
 ]
 if sudo_calls != expected_sudo_calls:
-    fail("wrapper sudo surface is not exactly the reviewed Dashy/Prometheus inspection commands")
+    fail("wrapper sudo surface is not exactly the generic Stage 6 inspector")
 
-# Do not permit execution actions or variable service forwarding.
+# The inspector identity must never receive execution authority.
 for forbidden in (
-    'arm dashy',
-    'deploy dashy',
-    'rollback dashy',
-    'disarm dashy',
-    'arm prometheus',
-    'deploy prometheus',
-    'rollback prometheus',
-    'disarm prometheus',
-    '$SERVICE',
-    '${SERVICE',
+    '/usr/local/libexec/homelab-stage6-transition',
+    '/usr/local/libexec/homelab-stage6-execute',
+    ' arm ',
+    ' deploy ',
+    ' rollback ',
+    ' disarm ',
 ):
     if forbidden in wrapper or forbidden in sudoers:
-        fail(f"execution/service-variable authority present: {forbidden}")
+        fail(f"execution authority present: {forbidden}")
 
-print('PASS: Stage 6 inspector transport source guard')
+print('PASS: Stage 6 generic inspector transport source guard')
