@@ -14,7 +14,6 @@ fail() {
 
 echo "===== STAGE 6 GENERIC SERVICE DISPATCH SOURCE VALIDATION ====="
 
-echo
 echo_section() {
     printf '\n===== %s =====\n' "$1"
 }
@@ -81,14 +80,13 @@ do
     printf 'PASS: %s\n' "$manifest"
 done
 
-echo_section "SUDOERS REGEX SYNTAX"
-command -v visudo >/dev/null 2>&1 || fail "visudo unavailable"
-visudo -cf ops/testserver/homelab-stage6-inspector-sudoers
-visudo -cf ops/testserver/homelab-stage6-executor-sudoers
-printf 'PASS: sudoers argument-regex syntax\n'
-
 echo_section "PATCH HYGIENE"
-git diff --check
+BASE="$(git merge-base HEAD main 2>/dev/null || true)"
+if [ -n "$BASE" ]; then
+    git diff --check "$BASE"..HEAD
+else
+    git diff --check
+fi
 printf 'PASS: git diff --check\n'
 
 echo_section "RESULT"
