@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -133,7 +132,10 @@ def main() -> int:
     for token, expected in expected_remote.items():
         require(count(text, token) == expected, f"remote command count mismatch for {token}")
 
-    require(count(text, "scripts/stage6-normalize-executor-key.sh \\") == 5, "executor key normalizer must run five times")
+    require(
+        count(text, "scripts/stage6-normalize-executor-key.sh") == 7,
+        "normalizer references must be two preflight checks plus five executor uses",
+    )
     require(count(text, '-i "$NORMALIZED_EXECUTOR_KEY"') == 5, "all executor SSH calls must use normalized key")
 
     for raw in (
