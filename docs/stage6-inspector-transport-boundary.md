@@ -1,23 +1,20 @@
 # Stage 6 inspector transport boundary
 
-Status: source-only transport contract under review
+Status: generic manifest-driven transport contract under review
 
-Date: 2026-08-27
+Date: 2026-08-28
 
 ## Purpose
 
-Provide Jenkins with a dedicated read-only SSH path for the generic Stage 6 inspector before any Stage 6 executor credential is created or bound.
+Provide Jenkins with one permanent read-only SSH path for every reviewed Stage 6 registry-image service without adding a new wrapper or sudo rule for each service.
 
-This boundary exists so the Jenkins human-approval pipeline can perform both mandatory inspections:
-
-1. pre-approval inspection;
-2. post-approval reinspection and zero-drift comparison.
+The inspector transport is intentionally generic. Service authority comes from the reviewed, root-owned manifest at `/etc/homelab-stage6/services/<service>.json`, not from hard-coded service names in the SSH wrapper.
 
 The transport does not expose arm, deploy, rollback or disarm.
 
 ## Dedicated identity
 
-The future TestServer identity is `homelab-stage6-inspector`.
+The TestServer identity is `homelab-stage6-inspector`.
 
 Required properties:
 
@@ -29,11 +26,11 @@ Required properties:
 - no general sudo authority;
 - no write access to Stage 6 manifests, helpers, authority checkout, execution state, sudoers or authorized-key policy files.
 
-The live SSH permission model must follow the already-proven Stage 6 executor pattern: home root:root `0755`, `.ssh` root:homelab-stage6-inspector `0750`, and `authorized_keys` root:homelab-stage6-inspector `0640`. The inspector may traverse/read those paths but must not be able to modify them.
+SSH policy material remains root-owned. The established permission model is home root:root `0755`, `.ssh` root:homelab-stage6-inspector `0750`, and `authorized_keys` root:homelab-stage6-inspector `0640`.
 
 ## SSH forced-command boundary
 
-The reviewed authorized-key template is:
+The reviewed authorized-key template remains:
 
 ```text
 restrict,from="172.30.255.250",command="/usr/local/sbin/homelab-stage6-inspector-ssh" ssh-ed25519 __PUBLIC_KEY__ homelab-stage6-testserver-inspector
@@ -41,90 +38,92 @@ restrict,from="172.30.255.250",command="/usr/local/sbin/homelab-stage6-inspector
 
 The private key must never be committed to Git.
 
-The forced-command wrapper permits exactly:
+The forced-command wrapper permits only:
 
 ```text
 ping
-inspect dashy
+inspect <service>
 ```
 
-`inspect dashy` maps internally to exactly:
+`<service>` must match:
 
 ```text
-sudo -n /usr/local/libexec/homelab-stage6-inspect dashy
+^[a-z0-9][a-z0-9-]*$
 ```
 
-Every other SSH command must fail with exit status 2.
+The wrapper therefore rejects whitespace injection, extra arguments, paths, image references, shell metacharacters and malformed service names before sudo is invoked.
 
-The OpenSSH `restrict` option plus the forced command prevents arbitrary command execution, PTY allocation, forwarding, tunnelling and user RC processing for this key.
+A valid request maps internally to:
+
+```text
+sudo -n /usr/local/libexec/homelab-stage6-inspect "<service>"
+```
+
+The root-owned inspector independently repeats the service-name validation, requires `/etc/homelab-stage6/services/<service>.json`, rejects symlink or writable manifest files, validates the manifest and requires `.service.name` and `.service.container` to equal the requested service.
+
+Every other SSH command fails closed.
 
 ## Sudo boundary
 
-The reviewed sudoers fragment contains exactly one rule:
+The sudoers fragment contains one service-generic command with a POSIX regular-expression argument constraint:
 
 ```text
-homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect dashy
+homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect ^[a-z0-9][a-z0-9-]*$
 ```
 
-The fragment must be installed root:root `0440` and pass `visudo -cf` before activation.
+This is not a shell wildcard. The argument expression is anchored and matches only the Stage 6 service identifier grammar.
 
-There is no wildcard service selection and no shell, Docker, Compose, Git, file-copy or execution-helper sudo authority.
+The fragment must be installed root:root `0440` and must pass `visudo -cf` before activation.
 
-## Why a dedicated Stage 6 inspector identity is required
+There is no shell, Docker, Compose, Git, file-copy, transition or execution-helper sudo authority.
 
-The generic Stage 6 inspector is intentionally root-only because it validates root-owned manifests, Git authority, live Compose identity, local immutable images, bind-mount hashes, runtime invariants, health and the complete container baseline.
+## Manifest is the service allow-list
 
-The existing Stage 5 inspection identity is maintenance-page-specific and should not be broadened. Stage 6 therefore uses its own narrow transport wrapper and one exact read-only sudo command.
+Adding an eligible service no longer requires editing the inspector wrapper or sudoers fragment.
+
+Onboarding requires a separately reviewed root-owned manifest. A syntactically valid service name with no installed manifest fails closed inside `homelab-stage6-inspect`.
+
+This keeps the code surface constant while service-specific identities, runtime shape, candidate/rollback digests, health checks and authority hashes remain data in the manifest.
 
 ## Jenkins ordering
 
-The later Stage 6 Jenkins pipeline must preserve this ordering:
+For any reviewed `<service>`, the Jenkins approval flow remains:
 
 1. bind only `homelab-stage6-testserver-inspector`;
-2. send literal `inspect dashy`;
-3. assert `service-update-inspection`, exact authority/current/rollback/candidate/runtime/health identities, `approval.granted=false`, and `deployment.allowed=false`;
-4. store the full critical/container-state evidence;
-5. require explicit Jenkins human approval by `james`;
-6. re-bind only the Stage 6 inspector credential;
-7. repeat literal `inspect dashy`;
-8. prove zero drift, including the full container-state baseline;
-9. only after that may `homelab-stage6-testserver-executor` be bound;
-10. execution remains limited to the already-reviewed Dashy arm/deploy/rollback/disarm boundary.
+2. send `inspect <service>`;
+3. validate the complete inspection artifact against the reviewed request;
+4. store pre-approval critical/container-state evidence;
+5. require explicit human approval;
+6. re-bind only the inspector credential;
+7. repeat `inspect <service>`;
+8. prove zero drift;
+9. only then bind `homelab-stage6-testserver-executor`.
 
-The inspector and executor credentials must remain independent keys and independent TestServer identities.
-
-## Activation sequence
-
-A later live activation proof must:
-
-1. validate exact merged source and source guard;
-2. prove the generic inspector installed SHA and current root-only behavior;
-3. generate an independent ED25519 inspector key outside Git;
-4. create the locked `homelab-stage6-inspector` account with no supplementary groups;
-5. install root-owned, inspector-group-readable SSH policy using the corrected `0750`/`0640` model;
-6. prove Jenkins source identity `172.30.255.250` and the pinned TestServer host key;
-7. prove real SSH `ping` with stdin disabled;
-8. prove arbitrary SSH commands are rejected;
-9. install the exact one-command inspector sudoers fragment;
-10. prove real `inspect dashy` emits the expected read-only Stage 6 artifact;
-11. prove no Stage 6 state directory/enable/consumed marker is created;
-12. prove every container is unchanged;
-13. only then create the Jenkins Stage 6 inspector credential.
+The inspector and executor remain independent keys and identities.
 
 ## Source guard
 
-`scripts/validate-stage6-inspector-transport.py` requires the exact forced-command wrapper, exact one-line sudoers rule and exact source-restricted authorized-key template. It rejects execution actions, variable service forwarding, shell/Docker/Compose/Git authority, moving tags and broad `NOPASSWD` access.
+`scripts/validate-stage6-inspector-transport.py` proves that:
 
-## Not included in this PR
+- the wrapper derives service only from `SSH_ORIGINAL_COMMAND`;
+- the identifier is validated before sudo dispatch;
+- the wrapper and sudoers do not hard-code Dashy, Prometheus or any other service;
+- sudo reaches only the generic read-only inspector;
+- the sudoers rule is the exact anchored argument regex;
+- no transition/execution, shell, Docker, Compose or Git authority is present;
+- the authorized-key template remains source-restricted and exact.
 
-- Unix account/group creation;
-- key generation or actual key material;
-- SSH policy installation;
-- sudoers installation;
-- Jenkins credential creation;
-- Jenkins job or pipeline creation;
-- Stage 6 state creation;
-- arm/deploy/rollback/disarm;
-- any container recreation.
+## Live activation requirements
 
-Effective Jenkins execution authority remains false after this source-only transport contract is merged.
+Before installing this refactor on TestServer:
+
+1. validate all source guards;
+2. verify the installed sudo version supports sudoers argument regexes;
+3. stage new sudoers fragments outside `/etc/sudoers.d` and run `visudo -cf` against them;
+4. install wrapper/sudoers atomically with root ownership and reviewed modes;
+5. prove `ping` works;
+6. prove malformed and unknown services fail;
+7. prove an onboarded service can be inspected;
+8. prove no Stage 6 state or container changes occur.
+
+No container deployment is authorized by installing this transport refactor.
