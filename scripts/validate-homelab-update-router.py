@@ -88,14 +88,17 @@ def main() -> int:
     )
 
     homepage = expect_pass(
-        "managed Homepage resolves current reviewed manifest",
+        "managed Homepage exposes steady-state inspection blocker",
         "--service",
         "homepage",
         "--action",
         "inspect",
     )
-    assert homepage["all_targets_inspect_ready"] is True
+    assert homepage["all_targets_inspect_ready"] is False
     assert homepage["targets"][0]["manifest"] == "homepage-2.1.2.json"
+    assert homepage["targets"][0]["blocker"] == (
+        "consumed-transition-manifest-requires-steady-state-inspector"
+    )
 
     expect_fail(
         "unknown service",
