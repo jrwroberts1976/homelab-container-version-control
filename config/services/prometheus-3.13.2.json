@@ -1,0 +1,133 @@
+{
+  "artifact": "service-update-manifest",
+  "authority": {
+    "compose_sha256": "bcf38b612b8319fef2e3d077f3a3e70599cbe0ddbd26a8789f35ca1fd2836b1d",
+    "repository": "docker-env",
+    "revision": "ce591602bc6300cad001eb445269f8f4b8933c53"
+  },
+  "execution": {
+    "candidate_acquisition": "separate-reviewed-step",
+    "candidate_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "human_approval_required": true,
+    "one_shot_required": true,
+    "post_approval_reinspection_required": true,
+    "rollback_only_for_consumed_pilot": true,
+    "rollback_required": true
+  },
+  "health": {
+    "expected_status": 200,
+    "marker": null,
+    "strategy": "http",
+    "timeout_seconds": 360,
+    "url": "http://192.168.2.220:9090/-/ready"
+  },
+  "mode": "stage6-generic",
+  "protection": {
+    "all_other_containers_unchanged": true,
+    "compare": [
+      "container_id",
+      "restart_count"
+    ],
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ]
+  },
+  "runtime": {
+    "compose_execution": {
+      "force_recreate": true,
+      "no_build": true,
+      "no_deps": true,
+      "pull": "never"
+    },
+    "devices_allowed": false,
+    "docker_socket_allowed": false,
+    "mounts": [
+      {
+        "destination": "/etc/prometheus/linux-hosts.yml",
+        "rw": false,
+        "sha256": "b306d39a3ab520dd4db8bcae22f701047b5e1efd74e98a2a8633fc17f5a5adda",
+        "source": "/home/james/docker/data/monitoring/prometheus/linux-hosts.yml",
+        "source_kind": "file",
+        "type": "bind"
+      },
+      {
+        "destination": "/etc/prometheus/prometheus.yml",
+        "rw": true,
+        "sha256": "7fabeed93b5833a4385e9f73b8aeba53a37bce6d721b4c0e918d9daf7c7a3297",
+        "source": "/home/james/docker/data/monitoring/prometheus/prometheus.yml",
+        "source_kind": "file",
+        "type": "bind"
+      },
+      {
+        "destination": "/prometheus",
+        "rw": true,
+        "sha256": null,
+        "source": "/home/james/docker/data/monitoring/prometheus/data",
+        "source_kind": "directory",
+        "type": "bind"
+      }
+    ],
+    "networks": [
+      "homelab_apps"
+    ],
+    "privileged": false,
+    "published_ports": [
+      {
+        "container_port": 9090,
+        "host_ip": "192.168.2.220",
+        "host_port": 9090,
+        "protocol": "tcp"
+      }
+    ],
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "user": "1000:1000"
+  },
+  "schema_version": 1,
+  "service": {
+    "compose": {
+      "compose_file": "/home/james/docker/stacks/monitoring/docker-compose.yml",
+      "image_variable": "PROMETHEUS_IMAGE",
+      "project": "monitoring",
+      "project_directory": "/home/james/docker/stacks/monitoring",
+      "service": "prometheus"
+    },
+    "container": "prometheus",
+    "host": "TestServer",
+    "image_type": "registry-image",
+    "name": "prometheus",
+    "risk_class": "medium"
+  },
+  "versions": {
+    "candidate": {
+      "config_digest": "sha256:26bf7bb2ea9e4394b01ea4bd704e802ad4544eea9b2bc95a5dad244b342142d5",
+      "created": "2026-07-30T12:02:05.288407376Z",
+      "image_repository": "prom/prometheus",
+      "immutable_ref": "prom/prometheus@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69",
+      "index_digest": "sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69",
+      "metadata_verification": "digest-pinned",
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      "platform_manifest_digest": "sha256:819dcd34085a183b908a439fc9379f1b504c0431a837b5e5b2d37a259b21c179",
+      "revision": "bb5dff00cf8fdfbf5c65e0531aa835fa238a43a2",
+      "version": "3.13.2"
+    },
+    "rollback": {
+      "image_repository": "prom/prometheus",
+      "immutable_ref": "prom/prometheus@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893",
+      "index_digest": "sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893",
+      "local_image_id": "sha256:4b91f0c2630ca36c5ed0275657a92a2e9270790b48d3ce7117adf1b468fceaa5",
+      "platform": {
+        "architecture": "arm64",
+        "os": "linux"
+      },
+      "platform_manifest_digest": null,
+      "version": "3.13.1"
+    },
+    "scheme": "semver"
+  }
+}
