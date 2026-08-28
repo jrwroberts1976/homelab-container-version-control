@@ -1,2 +1,5 @@
-homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect dashy
-homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect prometheus
+# Stage 6 Jenkins inspector sudo boundary.
+# Service selection is generic but constrained to the same safe identifier grammar
+# enforced by the root-owned inspector and requires a reviewed root-owned manifest.
+
+homelab-stage6-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-inspect ^[a-z0-9][a-z0-9-]*$
