@@ -160,12 +160,12 @@ verify_runtime_shape() {
     actual_networks="$(jq -c '.[0].NetworkSettings.Networks | keys | sort' <<<"$container_json")"
     [ "$actual_networks" = "$expected_networks" ] || fail "target network membership mismatch"
 
-    expected_ports="$(jq -c '.runtime.published_ports | sort_by(.container_port, .protocol, .host_ip, .host_port)' "$MANIFEST")"
-    actual_ports="$(jq -c '[((.[0].NetworkSettings.Ports // {}) | to_entries[]) as $e | select($e.value != null) | ($e.key | capture("^(?<port>[0-9]+)/(?<protocol>tcp|udp)$")) as $cp | $e.value[] | {host_ip:.HostIp,host_port:(.HostPort|tonumber),container_port:($cp.port|tonumber),protocol:$cp.protocol}] | sort_by(.container_port,.protocol,.host_ip,.host_port)' <<<"$container_json")"
+    expected_ports="$(jq -S -c '.runtime.published_ports | sort_by(.container_port, .protocol, .host_ip, .host_port)' "$MANIFEST")"
+    actual_ports="$(jq -S -c '[((.[0].NetworkSettings.Ports // {}) | to_entries[]) as $e | select($e.value != null) | ($e.key | capture("^(?<port>[0-9]+)/(?<protocol>tcp|udp)$")) as $cp | $e.value[] | {host_ip:.HostIp,host_port:(.HostPort|tonumber),container_port:($cp.port|tonumber),protocol:$cp.protocol}] | sort_by(.container_port,.protocol,.host_ip,.host_port)' <<<"$container_json")"
     [ "$actual_ports" = "$expected_ports" ] || fail "target published-port shape mismatch"
 
-    expected_mounts="$(jq -c '[.runtime.mounts[] | {type,source,destination,rw}] | sort_by(.destination,.source)' "$MANIFEST")"
-    actual_mounts="$(jq -c '[.[0].Mounts[] | {type:.Type,source:.Source,destination:.Destination,rw:.RW}] | sort_by(.destination,.source)' <<<"$container_json")"
+    expected_mounts="$(jq -S -c '[.runtime.mounts[] | {type,source,destination,rw}] | sort_by(.destination,.source)' "$MANIFEST")"
+    actual_mounts="$(jq -S -c '[.[0].Mounts[] | {type:.Type,source:.Source,destination:.Destination,rw:.RW}] | sort_by(.destination,.source)' <<<"$container_json")"
     [ "$actual_mounts" = "$expected_mounts" ] || fail "target mount shape mismatch"
 
     while IFS=$'\t' read -r source source_kind expected_sha; do

@@ -57,6 +57,15 @@ canonical_count="$(
 [ "$canonical_count" -ge 4 ] ||
     fail "generic inspector does not canonicalise all runtime JSON comparisons"
 
+executor_canonical_count="$(
+    grep -c 'jq -S -c' \
+        ops/testserver/homelab-stage6-execute ||
+    true
+)"
+
+[ "$executor_canonical_count" -ge 4 ] ||
+    fail "generic executor does not canonicalise all runtime JSON comparisons"
+
 expected_ports='[
   {
     "container_port": 9090,
