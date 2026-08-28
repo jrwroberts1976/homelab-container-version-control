@@ -97,15 +97,20 @@ def validate_wrapper(path: Path) -> None:
         "wrapper must expose exactly the generic transition and execution helpers",
     )
 
-    transition_case = text[text.find('arm\\ *|disarm\\ *)') : text.find('deploy\\ *|rollback\\ *)')]
+    transition_start = text.find('arm\\ *|disarm\\ *)')
+    execute_start = text.find('deploy\\ *|rollback\\ *)')
+    default_start = text.find('\n    *)', execute_start)
+    require(transition_start >= 0 and execute_start > transition_start, "generic action cases missing or reordered")
+    require(default_start > execute_start, "generic default reject case missing")
+
+    transition_case = text[transition_start:execute_start]
+    execute_case = text[execute_start:default_start]
     require('require_service "$SERVICE"' in transition_case, "transition service validation missing")
     require(
         transition_case.find('require_service "$SERVICE"')
         < transition_case.find('exec sudo -n /usr/local/libexec/homelab-stage6-transition'),
         "transition service validation must precede sudo",
     )
-
-    execute_case = text[text.find('deploy\\ *|rollback\\ *)') : text.find('*)', text.find('deploy\\ *|rollback\\ *)'))]
     require('require_service "$SERVICE"' in execute_case, "execution service validation missing")
     require(
         execute_case.find('require_service "$SERVICE"')
