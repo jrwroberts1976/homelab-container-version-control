@@ -162,7 +162,7 @@ def main() -> int:
     artifact_assertions = [
         "a.manifest_sha256 != env.STAGE6_MANIFEST_SHA256",
         "a.implementation?.inspector_sha256 != env.STAGE6_INSPECTOR_SOURCE_SHA256",
-        "a.current?.configured_image != env.STAGE6_ROLLBACK_TAG",
+        "a.current?.configured_image != env.STAGE6_ROLLBACK_CONFIGURED_IMAGE",
         "a.runtime?.health_strategy != env.STAGE6_HEALTH_STRATEGY",
         "a.runtime?.health_result != env.STAGE6_HEALTH_RESULT",
         "if (before != after)",

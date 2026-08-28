@@ -118,6 +118,7 @@
     },
     "rollback": {
       "image_repository": "prom/prometheus",
+      "configured_image": "prom/prometheus:v3.13.1",
       "immutable_ref": "prom/prometheus@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893",
       "index_digest": "sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893",
       "local_image_id": "sha256:4b91f0c2630ca36c5ed0275657a92a2e9270790b48d3ce7117adf1b468fceaa5",
