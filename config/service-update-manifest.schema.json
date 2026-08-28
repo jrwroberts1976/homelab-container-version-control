@@ -65,10 +65,11 @@
         "rollback": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["version", "image_repository", "immutable_ref", "index_digest", "local_image_id", "platform"],
+          "required": ["version", "image_repository", "configured_image", "immutable_ref", "index_digest", "local_image_id", "platform"],
           "properties": {
             "version": { "type": "string", "minLength": 1 },
             "image_repository": { "type": "string", "minLength": 1 },
+            "configured_image": { "type": "string", "minLength": 1 },
             "immutable_ref": { "$ref": "#/$defs/immutableRef" },
             "index_digest": { "$ref": "#/$defs/digest" },
             "platform_manifest_digest": {

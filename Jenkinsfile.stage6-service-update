@@ -98,7 +98,7 @@ pipeline {
           env.STAGE6_ROLLBACK_REF = rollback?.immutable_ref?.toString()
           env.STAGE6_ROLLBACK_IMAGE_ID = rollback?.local_image_id?.toString()
           env.STAGE6_ROLLBACK_PLATFORM = "${rollback?.platform?.os}/${rollback?.platform?.architecture}"
-          env.STAGE6_ROLLBACK_TAG = "${rollback?.image_repository}:${rollback?.version}"
+          env.STAGE6_ROLLBACK_CONFIGURED_IMAGE = rollback?.configured_image?.toString()
 
           env.STAGE6_CANDIDATE_VERSION = candidate?.version?.toString()
           env.STAGE6_CANDIDATE_REF = candidate?.immutable_ref?.toString()
@@ -240,7 +240,7 @@ pipeline {
           }
 
           if (a.current?.state != 'rollback' ||
-              a.current?.configured_image != env.STAGE6_ROLLBACK_TAG) {
+              a.current?.configured_image != env.STAGE6_ROLLBACK_CONFIGURED_IMAGE) {
             error('Current state is not the reviewed rollback baseline')
           }
 

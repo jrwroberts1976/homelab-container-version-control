@@ -116,6 +116,17 @@ def validate_manifest(manifest: dict) -> None:
     candidate_repo = candidate.get("image_repository")
     require(rollback_repo == candidate_repo and bool(rollback_repo), "candidate and rollback repositories must match")
 
+    rollback_configured_image = rollback.get("configured_image")
+    rollback_prefix = f"{rollback_repo}:"
+    require(
+        isinstance(rollback_configured_image, str)
+        and rollback_configured_image.startswith(rollback_prefix)
+        and len(rollback_configured_image) > len(rollback_prefix)
+        and "@" not in rollback_configured_image
+        and re.search(r"\s", rollback_configured_image) is None,
+        "rollback configured_image must be an exact tagged image in rollback repository",
+    )
+
     for label, item in (("rollback", rollback), ("candidate", candidate)):
         digest = item.get("index_digest")
         immutable_ref = item.get("immutable_ref")

@@ -144,16 +144,14 @@ verify_git_authority() {
 }
 
 verify_compose_rendering() {
-    local default_image candidate_image rollback_image rollback_tag
-
-    rollback_tag="${ROLLBACK_REPOSITORY}:${ROLLBACK_VERSION}"
+    local default_image candidate_image rollback_image
 
     default_image="$(rendered_image default)"
     candidate_image="$(rendered_image "$CANDIDATE_REF")"
     rollback_image="$(rendered_image "$ROLLBACK_REF")"
 
-    [ "$default_image" = "$rollback_tag" ] ||
-        fail "Compose default does not resolve to rollback tag"
+    [ "$default_image" = "$ROLLBACK_CONFIGURED_IMAGE" ] ||
+        fail "Compose default does not resolve to reviewed rollback configured image"
     [ "$candidate_image" = "$CANDIDATE_REF" ] ||
         fail "Compose candidate override is not exact immutable candidate"
     [ "$rollback_image" = "$ROLLBACK_REF" ] ||
@@ -238,8 +236,8 @@ verify_runtime_shape() {
         fail "target container is not running"
     [ "$(jq -r '.[0].Image' <<<"$container_json")" = "$ROLLBACK_LOCAL_ID" ] ||
         fail "pre-approval target is not exact rollback image"
-    [ "$(jq -r '.[0].Config.Image' <<<"$container_json")" = "${ROLLBACK_REPOSITORY}:${ROLLBACK_VERSION}" ] ||
-        fail "target configured image is not rollback tag"
+    [ "$(jq -r '.[0].Config.Image' <<<"$container_json")" = "$ROLLBACK_CONFIGURED_IMAGE" ] ||
+        fail "target configured image is not reviewed rollback configured image"
 
     expected_networks="$(
         jq -c '.runtime.networks | sort' "$MANIFEST"
@@ -569,6 +567,7 @@ IMAGE_VARIABLE="$(manifest_string '.service.compose.image_variable')"
 
 ROLLBACK_VERSION="$(manifest_string '.versions.rollback.version')"
 ROLLBACK_REPOSITORY="$(manifest_string '.versions.rollback.image_repository')"
+ROLLBACK_CONFIGURED_IMAGE="$(manifest_string '.versions.rollback.configured_image')"
 ROLLBACK_REF="$(manifest_string '.versions.rollback.immutable_ref')"
 ROLLBACK_LOCAL_ID="$(manifest_string '.versions.rollback.local_image_id')"
 ROLLBACK_OS="$(manifest_string '.versions.rollback.platform.os')"

@@ -26,6 +26,7 @@
     "rollback": {
       "version": "4.5.13",
       "image_repository": "lissy93/dashy",
+      "configured_image": "lissy93/dashy:4.5.13",
       "immutable_ref": "lissy93/dashy@sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4",
       "index_digest": "sha256:8bef3c7bf607de54bbcd4bc3733c481b06c0053b9d12ea781e3bd29457b8b6a4",
       "platform_manifest_digest": null,
