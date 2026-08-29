@@ -349,21 +349,128 @@ verify_content_checks() {
 
 verify_health() {
     local strategy expected url status code
+    local network port path container_ip
+
     strategy="$(manifest_string '.health.strategy')"
     expected="$(manifest_string '.health.expected')"
 
     case "$strategy" in
         docker-health)
-            status="$(jq -r '.[0].State.Health.Status // "none"' <<<"$CONTAINER_JSON")"
-            [ "$status" = "$expected" ] || fail "Docker health mismatch"
-            HEALTH_EVIDENCE="$(jq -n --arg strategy "$strategy" --arg status "$status" '{strategy:$strategy,status:$status}')"
+            status="$(
+                jq -r \
+                    '.[0].State.Health.Status // "none"' \
+                    <<<"$CONTAINER_JSON"
+            )"
+
+            [ "$status" = "$expected" ] ||
+                fail "Docker health mismatch"
+
+            HEALTH_EVIDENCE="$(
+                jq -n \
+                    --arg strategy "$strategy" \
+                    --arg status "$status" \
+                    '{
+                      strategy:$strategy,
+                      status:$status
+                    }'
+            )"
             ;;
+
         http)
             url="$(manifest_string '.health.url')"
-            code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 10 "$url")" || fail "HTTP health request failed"
-            [ "$code" = "$expected" ] || fail "HTTP health status mismatch"
-            HEALTH_EVIDENCE="$(jq -n --arg strategy "$strategy" --arg url "$url" --arg status "$code" '{strategy:$strategy,url:$url,status:$status}')"
+
+            code="$(
+                curl \
+                    --silent \
+                    --show-error \
+                    --output /dev/null \
+                    --write-out '%{http_code}' \
+                    --max-time 10 \
+                    "$url"
+            )" ||
+                fail "HTTP health request failed"
+
+            [ "$code" = "$expected" ] ||
+                fail "HTTP health status mismatch"
+
+            HEALTH_EVIDENCE="$(
+                jq -n \
+                    --arg strategy "$strategy" \
+                    --arg url "$url" \
+                    --arg status "$code" \
+                    '{
+                      strategy:$strategy,
+                      url:$url,
+                      status:$status
+                    }'
+            )"
             ;;
+
+        container-http)
+            network="$(manifest_string '.health.network')"
+
+            port="$(
+                jq -er '
+                  .health.container_port
+                  | numbers
+                  | select(. >= 1 and . <= 65535)
+                ' "$MANIFEST" 2>/dev/null
+            )" ||
+                fail "container HTTP health port unavailable"
+
+            path="$(manifest_string '.health.path')"
+
+            jq -e \
+                --arg network "$network" \
+                '.runtime.networks | index($network) != null' \
+                "$MANIFEST" >/dev/null ||
+                fail "container HTTP network is not reviewed"
+
+            container_ip="$(
+                jq -r \
+                    --arg network "$network" \
+                    '.[0].NetworkSettings.Networks[$network].IPAddress // ""' \
+                    <<<"$CONTAINER_JSON"
+            )"
+
+            [ -n "$container_ip" ] ||
+                fail "container HTTP network address unavailable"
+
+            url="http://${container_ip}:${port}${path}"
+
+            code="$(
+                curl \
+                    --silent \
+                    --show-error \
+                    --output /dev/null \
+                    --write-out '%{http_code}' \
+                    --max-time 10 \
+                    "$url"
+            )" ||
+                fail "container HTTP health request failed"
+
+            [ "$code" = "$expected" ] ||
+                fail "container HTTP health status mismatch"
+
+            HEALTH_EVIDENCE="$(
+                jq -n \
+                    --arg strategy "$strategy" \
+                    --arg network "$network" \
+                    --argjson container_port "$port" \
+                    --arg path "$path" \
+                    --arg url "$url" \
+                    --arg status "$code" \
+                    '{
+                      strategy:$strategy,
+                      network:$network,
+                      container_port:$container_port,
+                      path:$path,
+                      resolved_url:$url,
+                      status:$status
+                    }'
+            )"
+            ;;
+
         *)
             fail "unsupported health strategy"
             ;;

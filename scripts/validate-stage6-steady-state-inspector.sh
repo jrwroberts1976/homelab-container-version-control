@@ -37,7 +37,8 @@ python3 "$VALIDATOR" "$MANIFEST" >/dev/null || fail "Homepage steady-state manif
 
 IDS01_MANIFEST="$(mktemp)"
 CONTENT_MANIFEST="$(mktemp)"
-trap 'rm -f "$IDS01_MANIFEST" "$CONTENT_MANIFEST"' EXIT
+CONTAINER_HTTP_MANIFEST="$(mktemp)"
+trap 'rm -f "$IDS01_MANIFEST" "$CONTENT_MANIFEST" "$CONTAINER_HTTP_MANIFEST"' EXIT
 
 jq '
   .service.host = "ids-01"
@@ -89,7 +90,22 @@ jq '
 python3 "$VALIDATOR" "$CONTENT_MANIFEST" >/dev/null ||
     fail "ids-01 steady-state content-check manifest validation"
 
-echo "PASS: syntax and positive TestServer + ids-01 + content-check validation"
+jq '
+  .health = {
+    "strategy": "container-http",
+    "expected": "200",
+    "url": null,
+    "network": "homelab_apps",
+    "container_port": 9115,
+    "path": "/-/healthy",
+    "timeout_seconds": 360
+  }
+' "$IDS01_MANIFEST" > "$CONTAINER_HTTP_MANIFEST"
+
+python3 "$VALIDATOR" "$CONTAINER_HTTP_MANIFEST" >/dev/null ||
+    fail "ids-01 container-http steady-state manifest validation"
+
+echo "PASS: syntax and positive TestServer + ids-01 + content-check + container-http validation"
 
 BANNED=(
   'docker pull'
@@ -139,6 +155,9 @@ grep -Fq 'steady-state-verified' "$INSPECTOR" || fail "steady-state result missi
 grep -Fq 'verify_content_checks' "$INSPECTOR" || fail "content-check execution gate missing"
 grep -Fq 'CONTENT_CHECKS_JSON' "$INSPECTOR" || fail "content-check evidence missing"
 grep -Fq 'content check SHA-256 mismatch' "$INSPECTOR" || fail "content-check hash failure gate missing"
+grep -Fq 'container-http)' "$INSPECTOR" || fail "container-http health strategy missing"
+grep -Fq 'container HTTP network is not reviewed' "$INSPECTOR" || fail "container-http reviewed-network gate missing"
+grep -Fq 'NetworkSettings.Networks[$network].IPAddress' "$INSPECTOR" || fail "container-http runtime IP derivation missing"
 grep -Fq -- '--arg host "$MANIFEST_HOST"' "$INSPECTOR" || fail "dynamic host evidence missing"
 
 if grep -Fq -- '--arg host "TestServer"' "$INSPECTOR"; then
@@ -158,6 +177,18 @@ expect_rejected "ids-01 absolute authority compose path" '.authority.compose_pat
 expect_rejected "ids-01 authority path traversal" '.authority.compose_path = "hosts/ids-01/../monitoring/docker-compose.yml"' "$IDS01_MANIFEST"
 expect_rejected "ids-01 wrong authority subtree" '.authority.compose_path = "stacks/monitoring/docker-compose.yml"' "$IDS01_MANIFEST"
 expect_rejected "ids-01 TestServer-only health endpoint" '.health.url = "http://192.168.2.220:9090/-/ready"' "$IDS01_MANIFEST"
+
+expect_rejected   "container-http undeclared network"   '.health.network = "unreviewed"'   "$CONTAINER_HTTP_MANIFEST"
+
+expect_rejected   "container-http zero port"   '.health.container_port = 0'   "$CONTAINER_HTTP_MANIFEST"
+
+expect_rejected   "container-http boolean port"   '.health.container_port = true'   "$CONTAINER_HTTP_MANIFEST"
+
+expect_rejected   "container-http relative path"   '.health.path = "-/healthy"'   "$CONTAINER_HTTP_MANIFEST"
+
+expect_rejected   "container-http whitespace path"   '.health.path = "/-/bad path"'   "$CONTAINER_HTTP_MANIFEST"
+
+expect_rejected   "container-http fixed URL"   '.health.url = "http://127.0.0.1:9115/-/healthy"'   "$CONTAINER_HTTP_MANIFEST"
 
 expect_rejected   "content check absolute relative path"   '.runtime.content_checks[0].relative_path = "/etc/passwd"'   "$CONTENT_MANIFEST"
 
