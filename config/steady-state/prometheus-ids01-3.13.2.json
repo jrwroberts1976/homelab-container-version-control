@@ -4,8 +4,8 @@
   "mode": "stage6-steady-state",
   "authority": {
     "repository": "docker-env",
-    "revision": "c70025add8aabf7f2806109244f079fd230ca634",
-    "compose_sha256": "b94ff12930efc512e08a26480bb2fa5de1a0bbeed97124aee9dd092a86cc67c1",
+    "revision": "d1ca9a5e10d151893573fd97d6a5c282ba912a1e",
+    "compose_sha256": "128a8e842a2b1bc54b966b93aac9d11ba1d7c0cc7d8eb89282c7f2ffa1f89ae9",
     "compose_path": "hosts/ids-01/stacks/monitoring/docker-compose.yml"
   },
   "service": {
