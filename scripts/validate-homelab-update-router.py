@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 ROUTER = ROOT / "scripts" / "homelab-update.py"
+CATALOG = ROOT / "config" / "estate-updater-catalog.json"
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -21,7 +24,7 @@ def run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def expect_pass(name: str, *args: str) -> dict:
+def expect_routing_pass(name: str, *args: str) -> dict:
     result = run(*args)
     if result.returncode != 0:
         raise AssertionError(
@@ -45,8 +48,145 @@ def expect_fail(name: str, *args: str) -> None:
     print(f"PASS: {name} -> REJECTED")
 
 
+def load_router_module():
+    spec = importlib.util.spec_from_file_location("homelab_update_under_test", ROUTER)
+    if spec is None or spec.loader is None:
+        raise AssertionError("cannot load homelab-update module")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def homepage_target() -> tuple[dict, dict, str]:
+    catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+    service = catalog["services"]["homepage"]
+    entry = service["hosts"]["TestServer"]
+    host = catalog["hosts"]["TestServer"]
+    target = {
+        "host": "TestServer",
+        "backend": host["backend"],
+        "platform": host["platform"],
+        "backend_available": host["backend_available"],
+        "coverage": entry["coverage"],
+        "class": entry["class"],
+        "inspect_ready": entry["inspect_ready"],
+        "current_version": entry.get("current_version"),
+        "configured_image": entry["configured_image"],
+        "manifest": entry["manifest"],
+        "steady_state_manifest": entry["steady_state_manifest"],
+    }
+    return service, target, service["desired_version"]
+
+
+def reviewed_homepage_evidence(target: dict, desired_version: str) -> dict:
+    return {
+        "schema_version": 1,
+        "artifact": "service-steady-state-inspection",
+        "mode": "read-only",
+        "service": "homepage",
+        "host": "TestServer",
+        "manifest": {
+            "path": "/etc/homelab-stage6/steady-state/homepage.json",
+            "sha256": "a04738c432ffd998cb0d17029a0504dc7b3b6782aab4e9057006828b89ae9db0",
+        },
+        "authority": {
+            "repository": "docker-env",
+            "revision": "788b302c67fc21618d471ab7951ebf379d2a5593",
+            "compose_sha256": "9a1295c5c7848c578a9b339411b02b2320cb7bd4b78764fce1d6b661fe97287f",
+            "clean": True,
+        },
+        "desired": {
+            "version": desired_version,
+            "configured_image": target["configured_image"],
+            "immutable_ref": target["configured_image"],
+            "local_image_id": "sha256:3a2b25796deabbf5c77ed9efcca2e1cb270b64f00c70ca87cf797640e26705fe",
+        },
+        "runtime": {
+            "container_id": "d4abcf95abcd187be1f1c21a3e274f7ed924fe1d992fdb6453f9218f710fc88f",
+            "restart_count": 0,
+            "running": True,
+            "networks": ["homelab_apps"],
+            "published_ports": [],
+            "mounts": [],
+        },
+        "health": {"strategy": "docker-health", "status": "healthy"},
+        "protected_containers": [],
+        "mutation_allowed": False,
+        "deployment": {"allowed": False, "performed": False},
+        "result": "steady-state-verified",
+    }
+
+
+def test_homepage_adapter_without_host_contact() -> None:
+    module = load_router_module()
+    service, target, desired_version = homepage_target()
+
+    assert target["inspect_ready"] is True
+    assert target["steady_state_manifest"] == "homepage.json"
+    assert "blocker" not in service["hosts"]["TestServer"]
+
+    evidence = reviewed_homepage_evidence(target, desired_version)
+    completed = subprocess.CompletedProcess(
+        args=[str(module.STEADY_INSPECTOR), "homepage"],
+        returncode=0,
+        stdout=json.dumps(evidence),
+        stderr="",
+    )
+
+    with (
+        mock.patch.object(module, "is_installed_mode", return_value=True),
+        mock.patch.object(module.os, "geteuid", return_value=0),
+        mock.patch.object(module, "current_short_hostname", return_value="TestServer"),
+        mock.patch.object(module, "require_secure_regular_file"),
+        mock.patch.object(module.subprocess, "run", return_value=completed) as runner,
+    ):
+        actual = module.execute_local_testserver_inspection(
+            "homepage",
+            target,
+            desired_version,
+        )
+
+    assert actual == evidence
+    runner.assert_called_once()
+    positional, keyword = runner.call_args
+    assert positional[0] == [str(module.STEADY_INSPECTOR), "homepage"]
+    assert keyword["shell"] is False
+    assert keyword["stdin"] == module.subprocess.DEVNULL
+    assert keyword["check"] is False
+    assert keyword["env"] == module.FIXED_ENV
+    print("PASS: Homepage adapter uses fixed argv/no shell under mocked read-only evidence")
+
+    bad = json.loads(json.dumps(evidence))
+    bad["mutation_allowed"] = True
+    try:
+        module.validate_inspection_evidence(
+            bad,
+            "homepage",
+            target,
+            desired_version,
+        )
+    except module.RouterError:
+        print("PASS: mutating Homepage evidence -> REJECTED")
+    else:
+        raise AssertionError("mutating Homepage evidence was accepted")
+
+    with mock.patch.object(module.subprocess, "run") as runner:
+        try:
+            module.execute_local_testserver_inspection(
+                "homepage",
+                target,
+                desired_version,
+            )
+        except module.RouterError:
+            pass
+        else:
+            raise AssertionError("source-checkout live inspection gate did not fail closed")
+        runner.assert_not_called()
+    print("PASS: mutable source checkout cannot perform live host inspection")
+
+
 def main() -> int:
-    prometheus = expect_pass(
+    prometheus = expect_routing_pass(
         "prometheus default multi-host routing",
         "--service",
         "prometheus",
@@ -60,7 +200,7 @@ def main() -> int:
     assert prometheus["desired_version"] == "3.13.2"
     assert prometheus["all_targets_inspect_ready"] is False
 
-    blackbox = expect_pass(
+    blackbox = expect_routing_pass(
         "exact desired version and host filter",
         "--service",
         "blackbox-exporter",
@@ -74,8 +214,8 @@ def main() -> int:
     assert len(blackbox["targets"]) == 1
     assert blackbox["targets"][0]["platform"] == "linux/arm64"
 
-    whoami = expect_pass(
-        "kubernetes host represented from day one",
+    whoami = expect_routing_pass(
+        "kubernetes host represented and remains fail-closed",
         "--service",
         "whoami",
         "--action",
@@ -87,18 +227,7 @@ def main() -> int:
         "traefik/whoami@sha256:"
     )
 
-    homepage = expect_pass(
-        "managed Homepage exposes steady-state inspection blocker",
-        "--service",
-        "homepage",
-        "--action",
-        "inspect",
-    )
-    assert homepage["all_targets_inspect_ready"] is False
-    assert homepage["targets"][0]["manifest"] == "homepage-2.1.2.json"
-    assert homepage["targets"][0]["blocker"] == (
-        "consumed-transition-manifest-requires-steady-state-inspector"
-    )
+    test_homepage_adapter_without_host_contact()
 
     expect_fail(
         "unknown service",
@@ -210,9 +339,9 @@ def main() -> int:
         "rollback",
     )
 
-    print("PASS: homelab-update Phase 1 router regression suite completed")
-    print("NO HOST CONTACT PERFORMED")
-    print("NO MUTATION PATH EXISTS IN PHASE 1 ROUTER")
+    print("PASS: homelab-update Phase 2B source regression suite completed")
+    print("NO REAL HOST CONTACT PERFORMED BY REGRESSION SUITE")
+    print("NO MUTATION PATH EXISTS")
     return 0
 
 
