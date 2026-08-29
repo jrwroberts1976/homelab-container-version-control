@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Estate updater front end.
 
-Phase 2B keeps routing fail-closed for unsupported targets and adds one reviewed
-live read-only adapter: Homepage steady-state inspection on local TestServer.
-No prepare, deploy or rollback execution path exists in this front end.
+Phase 2C keeps routing fail-closed for unsupported targets and supports reviewed
+read-only steady-state inspection on local TestServer plus the fixed-command
+ids-01 SSH transport. No prepare, deploy or rollback execution path exists.
 """
 
 from __future__ import annotations
@@ -38,7 +38,20 @@ CALLER_OPTIONS = ("--service", "--version", "--hosts", "--action")
 INSTALLED_SELF = Path("/usr/local/bin/homelab-update")
 INSTALLED_CATALOG = Path("/etc/homelab-stage6/estate-updater-catalog.json")
 STEADY_INSPECTOR = Path("/usr/local/libexec/homelab-stage6-steady-inspect")
+SSH = Path("/usr/bin/ssh")
 TESTSERVER = "TestServer"
+IDS01 = "ids-01"
+
+IDS01_INSPECTION_TRANSPORT = {
+    "type": "ssh-fixed-command",
+    "address": "192.168.2.242",
+    "user": "homelab-stage6-steady-inspector",
+    "identity_file":
+        "/etc/homelab-stage6/ssh/ids-01-steady-inspector",
+    "known_hosts_file":
+        "/etc/homelab-stage6/ssh/known_hosts",
+}
+
 FIXED_ENV = {
     "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
     "HOME": "/root",
@@ -121,6 +134,29 @@ def validate_catalog(catalog: Any) -> None:
         if not isinstance(host.get("backend_available"), bool):
             raise RouterError(f"backend_available must be boolean for {host_name}")
 
+        transport = host.get("inspection_transport")
+
+        if host_name == TESTSERVER:
+            if transport is not None:
+                raise RouterError(
+                    "TestServer local inspection must not define SSH transport"
+                )
+        elif host_name == IDS01:
+            if host["backend_available"]:
+                if transport != IDS01_INSPECTION_TRANSPORT:
+                    raise RouterError(
+                        "ids-01 backend requires exact reviewed "
+                        "fixed-command SSH transport"
+                    )
+            elif transport is not None:
+                raise RouterError(
+                    "ids-01 unavailable backend must not expose SSH transport"
+                )
+        elif transport is not None:
+            raise RouterError(
+                f"unsupported inspection transport for {host_name}"
+            )
+
     for service_name, service in services.items():
         if not isinstance(service_name, str) or not SERVICE_RE.fullmatch(service_name):
             raise RouterError(f"invalid catalogue service name: {service_name!r}")
@@ -191,12 +227,29 @@ def validate_catalog(catalog: Any) -> None:
                         f"inspect-ready target must not retain blocker: {service_name}/{host_name}"
                     )
                 if (
-                    host_name != TESTSERVER
-                    or hosts[host_name]["backend"] != "docker-compose-stage6"
+                    hosts[host_name]["backend"] != "docker-compose-stage6"
                     or steady_manifest is None
                 ):
                     raise RouterError(
-                        f"Phase 2B inspect-ready target lacks supported local steady-state contract: {service_name}/{host_name}"
+                        "inspect-ready target lacks reviewed Docker "
+                        f"steady-state contract: {service_name}/{host_name}"
+                    )
+
+                if host_name == TESTSERVER:
+                    pass
+                elif host_name == IDS01:
+                    if (
+                        hosts[host_name].get("inspection_transport")
+                        != IDS01_INSPECTION_TRANSPORT
+                    ):
+                        raise RouterError(
+                            "ids-01 inspect-ready target lacks exact "
+                            "fixed-command SSH transport"
+                        )
+                else:
+                    raise RouterError(
+                        "inspect-ready target lacks supported inspection "
+                        f"transport: {service_name}/{host_name}"
                     )
 
 
@@ -259,6 +312,16 @@ def require_secure_regular_file(path: Path, executable: bool = False) -> None:
 
 def current_short_hostname() -> str:
     return os.uname().nodename.split(".", 1)[0]
+
+
+def require_secure_private_key(path: Path) -> None:
+    require_secure_regular_file(path)
+
+    info = path.stat()
+    if info.st_mode & 0o077:
+        raise RouterError(
+            f"SSH private key permissions are too broad: {path}"
+        )
 
 
 def validate_inspection_evidence(
@@ -357,6 +420,150 @@ def execute_local_testserver_inspection(
     return validate_inspection_evidence(evidence, service, target, desired_version)
 
 
+
+
+def execute_remote_ids01_inspection(
+    service: str,
+    target: dict[str, Any],
+    desired_version: str | None,
+) -> dict[str, Any]:
+    if not is_installed_mode():
+        raise RouterError(
+            "live inspection requires the installed root-owned "
+            "homelab-update front end"
+        )
+
+    if os.geteuid() != 0:
+        raise RouterError("live inspection requires root privilege")
+
+    if current_short_hostname() != TESTSERVER:
+        raise RouterError(
+            "ids-01 inspection must originate from TestServer"
+        )
+
+    if (
+        target.get("host") != IDS01
+        or target.get("backend") != "docker-compose-stage6"
+    ):
+        raise RouterError(
+            "unsupported remote steady-state inspection target"
+        )
+
+    transport = target.get("inspection_transport")
+
+    if transport != IDS01_INSPECTION_TRANSPORT:
+        raise RouterError(
+            "ids-01 inspection transport differs from reviewed route"
+        )
+
+    require_secure_regular_file(INSTALLED_SELF, executable=True)
+    require_secure_regular_file(INSTALLED_CATALOG)
+    require_secure_regular_file(SSH, executable=True)
+
+    identity = Path(transport["identity_file"])
+    known_hosts = Path(transport["known_hosts_file"])
+
+    require_secure_private_key(identity)
+    require_secure_regular_file(known_hosts)
+
+    argv = [
+        str(SSH),
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "IdentitiesOnly=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-o",
+        "PasswordAuthentication=no",
+        "-o",
+        "KbdInteractiveAuthentication=no",
+        "-o",
+        "PreferredAuthentications=publickey",
+        "-o",
+        "ClearAllForwardings=yes",
+        "-o",
+        "PermitLocalCommand=no",
+        "-o",
+        "ConnectTimeout=10",
+        "-i",
+        str(identity),
+        f'{transport["user"]}@{transport["address"]}',
+        "inspect",
+        service,
+    ]
+
+    try:
+        completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=120,
+            env=FIXED_ENV,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RouterError(
+            f"ids-01 steady-state SSH inspection failed: {exc}"
+        ) from exc
+
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+
+        if len(detail) > 2000:
+            detail = detail[:2000] + "..."
+
+        raise RouterError(
+            "ids-01 steady-state inspector rejected live state "
+            f"(rc={completed.returncode}): {detail}"
+        )
+
+    try:
+        evidence = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RouterError(
+            "ids-01 steady-state inspector returned invalid JSON"
+        ) from exc
+
+    return validate_inspection_evidence(
+        evidence,
+        service,
+        target,
+        desired_version,
+    )
+
+
+def execute_reviewed_inspection(
+    service: str,
+    target: dict[str, Any],
+    desired_version: str | None,
+) -> dict[str, Any]:
+    if target.get("host") == TESTSERVER:
+        return execute_local_testserver_inspection(
+            service,
+            target,
+            desired_version,
+        )
+
+    if target.get("host") == IDS01:
+        return execute_remote_ids01_inspection(
+            service,
+            target,
+            desired_version,
+        )
+
+    raise RouterError(
+        f"no reviewed live inspection adapter for {target.get('host')}"
+    )
+
 def build_targets(
     service: dict[str, Any],
     selected_hosts: list[str],
@@ -377,6 +584,9 @@ def build_targets(
             "current_version": entry.get("current_version"),
             "configured_image": entry["configured_image"],
         }
+        if "inspection_transport" in host:
+            target["inspection_transport"] = host["inspection_transport"]
+
         for optional in (
             "manifest",
             "steady_state_manifest",
@@ -458,25 +668,24 @@ def main(argv: list[str]) -> int:
     selected_hosts = parse_hosts(args.hosts, approved_hosts, hosts)
     targets = build_targets(service, selected_hosts, hosts)
 
-    if not all(target["inspect_ready"] for target in targets):
+    if (
+        not all(target["inspect_ready"] for target in targets)
+        or not is_installed_mode()
+    ):
         result = routing_result(catalog_path, args, desired, targets)
         json.dump(result, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         return 0
 
-    if len(targets) != 1:
-        fail("Phase 2B live inspection supports exactly one reviewed target")
-
     try:
-        evidence = execute_local_testserver_inspection(
-            args.service,
-            targets[0],
-            desired,
-        )
+        for target in targets:
+            target["inspection"] = execute_reviewed_inspection(
+                args.service,
+                target,
+                desired,
+            )
     except RouterError as exc:
         fail(str(exc))
-
-    targets[0]["inspection"] = evidence
     result = {
         "schema_version": 1,
         "artifact": "estate-update-inspection",
