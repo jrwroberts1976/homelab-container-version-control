@@ -21,7 +21,7 @@ Target initial production completion: **16 October 2026**
 | 3. Update proposals | 12–18 Sep | Planned | Renovate configured to create controlled Docker image PRs | PRs are accurate; no automatic production deployment |
 | 4. Validation gate | 19–25 Sep | Planned | Jenkins validates Compose, downgrade risk, architecture, policy and Trivy results | Candidate changes reliably pass/fail before deployment |
 | 5. Pilot go-live | 26 Sep–2 Oct | Pattern proven; formal gate pending | Guarded deployment of selected low-risk services | Health and rollback tests pass for pilot services |
-| 6. Production rollout | 3–9 Oct | Planned | Extend process to critical/BAU services in controlled batches | Critical service rollback and recovery demonstrated |
+| 6. Production rollout | 3–9 Oct | **Complete — 29 Aug, ahead of plan** | Extend process to critical/BAU services in controlled batches | Passed: 7 normalizations consumed; 13 deferrals documented; zero unreviewed tagged external services |
 | 7. Observability & closure | 10–16 Oct | Planned | Grafana/Prometheus compliance view, alerting, runbooks and handover | Runtime drift visible; operational runbook accepted |
 
 
