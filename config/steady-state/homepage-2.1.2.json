@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "artifact": "service-steady-state-manifest",
+  "mode": "stage6-steady-state",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "788b302c67fc21618d471ab7951ebf379d2a5593",
+    "compose_sha256": "9a1295c5c7848c578a9b339411b02b2320cb7bd4b78764fce1d6b661fe97287f"
+  },
+  "service": {
+    "name": "homepage",
+    "host": "TestServer",
+    "container": "homepage",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project_directory": "/home/james/docker/stacks/dashboards",
+      "project": "dashboards",
+      "compose_file": "/home/james/docker/stacks/dashboards/docker-compose.yml",
+      "service": "homepage",
+      "image_variable": "HOMEPAGE_IMAGE"
+    }
+  },
+  "desired": {
+    "version": "2.1.2",
+    "image_repository": "ghcr.io/gethomepage/homepage",
+    "configured_image": "ghcr.io/gethomepage/homepage@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60",
+    "immutable_ref": "ghcr.io/gethomepage/homepage@sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60",
+    "index_digest": "sha256:da9dca9ec258c628146bed1445da0853f2b88f0b10bafd97c091de807c363d60",
+    "local_image_id": "sha256:3a2b25796deabbf5c77ed9efcca2e1cb270b64f00c70ca87cf797640e26705fe",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    },
+    "metadata_verification": "digest-pinned",
+    "revision": "5873f8e7d5d09567f15d437f75f8509e3b5d3d94",
+    "created": "2026-08-21T17:00:45.769921064Z"
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/dashboards/homepage/config",
+        "destination": "/app/config",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/dashboards/homepage/data",
+        "destination": "/app/data",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/dashboards/homepage/logs",
+        "destination": "/app/logs",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/var/run/docker.sock",
+        "destination": "/var/run/docker.sock",
+        "rw": false,
+        "source_kind": "socket",
+        "sha256": null
+      }
+    ],
+    "user": "root",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": true
+  },
+  "health": {
+    "strategy": "docker-health",
+    "expected": "healthy",
+    "url": null,
+    "timeout_seconds": 60
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ]
+  }
+}
