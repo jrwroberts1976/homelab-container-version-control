@@ -1,0 +1,29 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+COMMAND="${SSH_ORIGINAL_COMMAND:-}"
+
+fail() {
+    printf 'FAIL: command not permitted\n' >&2
+    exit 2
+}
+
+case "$COMMAND" in
+    ping)
+        printf 'pong\n'
+        ;;
+    inspect\ *)
+        SERVICE="${COMMAND#inspect }"
+        [[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
+
+        exec sudo -n \
+            /usr/local/libexec/homelab-stage6-steady-inspect \
+            "$SERVICE"
+        ;;
+    *)
+        fail
+        ;;
+esac

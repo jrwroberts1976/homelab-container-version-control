@@ -1,0 +1,5 @@
+# Stage 6 ids-01 steady-state inspection boundary.
+# This identity can invoke only the root-owned read-only steady-state inspector
+# with one constrained service identifier. No transition or executor authority.
+
+homelab-stage6-steady-inspector ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-steady-inspect ^[a-z0-9][a-z0-9-]*$
