@@ -84,7 +84,7 @@
     "dashy": {
       "desired_version": "4.6.0",
       "hosts": {
-        "TestServer": {"current_version": "4.6.0", "configured_image": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59", "coverage": "managed-tested", "class": "standard-registry", "manifest": "dashy-4.6.0.json", "inspect_ready": false, "blocker": "authority-roll-forward-required"}
+        "TestServer": {"current_version": "4.6.0", "configured_image": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59", "coverage": "managed-tested", "class": "standard-registry", "manifest": "dashy-4.6.0.json", "steady_state_manifest": "dashy.json", "inspect_ready": true}
       }
     },
     "dozzle": {
@@ -187,7 +187,7 @@
     "prometheus": {
       "desired_version": "3.13.2",
       "hosts": {
-        "TestServer": {"current_version": "3.13.2", "configured_image": "prom/prometheus@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69", "coverage": "managed-tested", "class": "standard-registry", "manifest": "prometheus-3.13.2.json", "inspect_ready": false, "blocker": "authority-roll-forward-required"},
+        "TestServer": {"current_version": "3.13.2", "configured_image": "prom/prometheus@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69", "coverage": "managed-tested", "class": "standard-registry", "manifest": "prometheus-3.13.2.json", "steady_state_manifest": "prometheus.json", "inspect_ready": true},
         "ids-01": {"current_version": "3.13.1", "configured_image": "prom/prometheus:v3.13.1", "coverage": "pending-onboarding", "class": "standard-registry", "inspect_ready": false, "blocker": "ids-01-stage6-inspector-not-installed"}
       }
     },
