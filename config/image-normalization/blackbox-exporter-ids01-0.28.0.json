@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "artifact": "service-image-normalization-manifest",
+  "mode": "stage6-image-ref-normalization",
+  "service": {
+    "name": "blackbox-exporter",
+    "container": "blackbox-exporter",
+    "host": "ids-01",
+    "image_type": "registry-image",
+    "risk_class": "low",
+    "compose": {
+      "project": "monitoring",
+      "service": "blackbox-exporter",
+      "project_directory": "/home/james/docker/stacks/monitoring",
+      "compose_file": "/home/james/docker/stacks/monitoring/docker-compose.yml",
+      "image_variable": "BLACKBOX_EXPORTER_IMAGE"
+    }
+  },
+  "authority": {
+    "repository": "docker-env",
+    "revision": "d1ca9a5e10d151893573fd97d6a5c282ba912a1e",
+    "compose_sha256": "128a8e842a2b1bc54b966b93aac9d11ba1d7c0cc7d8eb89282c7f2ffa1f89ae9",
+    "compose_path": "hosts/ids-01/stacks/monitoring/docker-compose.yml"
+  },
+  "image": {
+    "version": "0.28.0",
+    "repository": "prom/blackbox-exporter",
+    "source": {
+      "configured_image": "prom/blackbox-exporter:v0.28.0",
+      "local_image_id": "sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc"
+    },
+    "target": {
+      "configured_image": "prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc",
+      "index_digest": "sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc",
+      "local_image_id": "sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc"
+    },
+    "rollback": {
+      "configured_image": "prom/blackbox-exporter:v0.28.0",
+      "local_image_id": "sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc"
+    },
+    "platform": {
+      "os": "linux",
+      "architecture": "amd64"
+    },
+    "same_content_required": true
+  },
+  "runtime": {
+    "networks": [
+      "monitoring"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/monitoring/blackbox/blackbox.yml",
+        "destination": "/etc/blackbox_exporter/config.yml",
+        "rw": false,
+        "source_kind": "file",
+        "sha256": "8303b38676d0253c2a782e586c165d5d39feca32cc1f186d240435f09b0fc9b0"
+      }
+    ],
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false,
+    "compose_execution": {
+      "no_deps": true,
+      "no_build": true,
+      "pull": "never",
+      "force_recreate": true
+    }
+  },
+  "health": {
+    "strategy": "container-http",
+    "network": "monitoring",
+    "container_port": 9115,
+    "path": "/-/healthy",
+    "expected_status": 200,
+    "marker": "Healthy",
+    "timeout_seconds": 30
+  },
+  "protection": {
+    "containers": [
+      "grafana",
+      "loki"
+    ],
+    "compare": [
+      "container_id",
+      "restart_count"
+    ],
+    "all_other_containers_unchanged": true
+  },
+  "execution": {
+    "human_approval_required": true,
+    "post_approval_reinspection_required": true,
+    "one_shot_required": true,
+    "target_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "rollback_required": true,
+    "rollback_ref_type": "tagged-source-configuration",
+    "normalization_kind": "tag-to-immutable-same-content"
+  }
+}
