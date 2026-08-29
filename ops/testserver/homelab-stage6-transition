@@ -57,7 +57,20 @@ load_manifest() {
 
     [ "$(manifest_string '.service.name')" = "$SERVICE" ] || fail "manifest service mismatch"
     [ "$(manifest_string '.service.container')" = "$SERVICE" ] || fail "manifest container mismatch"
-    [ "$(manifest_string '.service.host')" = "TestServer" ] || fail "manifest host mismatch"
+    MANIFEST_HOST="$(manifest_string '.service.host')"
+    CURRENT_HOST="$(hostname -s)"
+
+    case "$MANIFEST_HOST" in
+        TestServer|ids-01)
+            ;;
+        *)
+            fail "manifest host is not a reviewed Stage 6 Docker host"
+            ;;
+    esac
+
+    [ "$CURRENT_HOST" = "$MANIFEST_HOST" ] ||
+        fail "manifest host does not match local machine"
+
     [ "$(manifest_string '.service.image_type')" = "registry-image" ] || fail "unsupported image type"
 
     TARGET_CONTAINER="$(manifest_string '.service.container')"
@@ -67,6 +80,17 @@ load_manifest() {
     CANDIDATE_VERSION="$(manifest_string '.versions.candidate.version')"
     CANDIDATE_REF="$(manifest_string '.versions.candidate.immutable_ref')"
     CANDIDATE_CONFIG_DIGEST="$(manifest_string '.versions.candidate.config_digest')"
+    CANDIDATE_LOCAL_ID="$(
+        jq -er '
+          (
+            .versions.candidate.local_image_id
+            //
+            .versions.candidate.config_digest
+          )
+          | strings
+          | select(length > 0)
+        ' "$MANIFEST"
+    )" || fail "candidate local image ID unavailable"
     CANDIDATE_INDEX_DIGEST="$(manifest_string '.versions.candidate.index_digest')"
 
     UPDATE_ID="stage6-${SERVICE}-${CANDIDATE_INDEX_DIGEST#sha256:}"
@@ -103,7 +127,7 @@ run_preapproval_inspection() {
         --arg rollback_ref "$ROLLBACK_REF" \
         --arg rollback_id "$ROLLBACK_LOCAL_ID" \
         --arg candidate_ref "$CANDIDATE_REF" \
-        --arg candidate_id "$CANDIDATE_CONFIG_DIGEST" '
+        --arg candidate_id "$CANDIDATE_LOCAL_ID" '
           .schema_version == 1
           and .artifact == "service-update-inspection"
           and .mode == "stage6-preapproval-inspect"
@@ -223,7 +247,7 @@ disarm() {
     if [ -e "$CONSUMED_FILE" ]; then
         require_secure_root_file "$CONSUMED_FILE"
         consumed=true
-        if [ "$current_image" != "$CANDIDATE_CONFIG_DIGEST" ] && [ "$current_image" != "$ROLLBACK_LOCAL_ID" ]; then
+        if [ "$current_image" != "$CANDIDATE_LOCAL_ID" ] && [ "$current_image" != "$ROLLBACK_LOCAL_ID" ]; then
             fail "consumed update target is neither exact candidate nor rollback image"
         fi
     else

@@ -18,6 +18,11 @@ SEMVER_RE = re.compile(
     r"(?:\+[0-9A-Za-z.-]+)?$"
 )
 
+SUPPORTED_DOCKER_HOSTS = {
+    "TestServer": "arm64",
+    "ids-01": "amd64",
+}
+
 
 def fail(message: str) -> None:
     raise ValueError(message)
@@ -93,7 +98,12 @@ def validate_manifest(manifest: dict) -> None:
     require(service.get("risk_class") in {"low", "medium"}, "risk class must be low or medium")
     require(service.get("name") == service.get("container"), "v1 service/container identity must match")
     require(service.get("name") == compose.get("service"), "v1 service/Compose service identity must match")
-    require(service.get("host") == "TestServer", "Stage 6 v1 host must be TestServer")
+    host = str(service.get("host", ""))
+    require(
+        host in SUPPORTED_DOCKER_HOSTS,
+        "Stage 6 Docker host is not reviewed",
+    )
+    expected_architecture = SUPPORTED_DOCKER_HOSTS[host]
 
     for key in ("project_directory", "compose_file"):
         value = compose.get(key)
@@ -109,6 +119,42 @@ def validate_manifest(manifest: dict) -> None:
     require(authority.get("repository") == "docker-env", "authority.repository must be docker-env")
     require(COMMIT_RE.fullmatch(str(authority.get("revision", ""))) is not None, "authority revision invalid")
     require(SHA_RE.fullmatch(str(authority.get("compose_sha256", ""))) is not None, "authority compose SHA invalid")
+
+    authority_compose_path = authority.get("compose_path")
+
+    if authority_compose_path is not None:
+        require(
+            isinstance(authority_compose_path, str)
+            and authority_compose_path,
+            "authority compose path must be a non-empty string",
+        )
+
+        authority_path = Path(authority_compose_path)
+
+        require(
+            not authority_path.is_absolute(),
+            "authority compose path must be relative",
+        )
+        require(
+            ".." not in authority_path.parts,
+            "authority compose path traversal rejected",
+        )
+
+    if host == "ids-01":
+        require(
+            isinstance(authority_compose_path, str)
+            and authority_compose_path,
+            "ids-01 requires reviewed authority compose path",
+        )
+        require(
+            authority_compose_path.startswith("hosts/ids-01/"),
+            "ids-01 authority compose path must remain under hosts/ids-01",
+        )
+    elif authority_compose_path is not None:
+        require(
+            authority_compose_path.startswith("stacks/"),
+            "TestServer authority compose path must remain under stacks",
+        )
 
     require(versions.get("scheme") in {"semver", "yyyymmdd", "integer", "opaque", "channel", "provenance"}, "unknown version scheme")
 
@@ -137,7 +183,10 @@ def validate_manifest(manifest: dict) -> None:
         )
         platform = item.get("platform") or {}
         require(platform.get("os") == "linux", f"{label} OS must be linux")
-        require(platform.get("architecture") == "arm64", f"{label} architecture must be arm64")
+        require(
+            platform.get("architecture") == expected_architecture,
+            f"{label} architecture must be {expected_architecture} for {host}",
+        )
 
     require(
         DIGEST_RE.fullmatch(str(rollback.get("local_image_id") or "")) is not None,
@@ -153,6 +202,20 @@ def validate_manifest(manifest: dict) -> None:
         and DIGEST_RE.fullmatch(candidate["config_digest"]) is not None,
         "candidate config digest invalid",
     )
+
+    candidate_local_image_id = candidate.get("local_image_id")
+
+    if host == "ids-01":
+        require(
+            DIGEST_RE.fullmatch(str(candidate_local_image_id or "")) is not None,
+            "ids-01 candidate local image ID required",
+        )
+    elif candidate_local_image_id is not None:
+        require(
+            DIGEST_RE.fullmatch(str(candidate_local_image_id)) is not None,
+            "candidate local image ID invalid",
+        )
+
     require(candidate.get("index_digest") != rollback.get("index_digest"), "candidate equals rollback digest")
     validate_datetime(candidate.get("created", ""))
 
@@ -299,11 +362,35 @@ def validate_manifest(manifest: dict) -> None:
     if health.get("strategy") == "docker-health":
         require(health.get("expected") == "healthy", "docker-health expected state must be healthy")
     else:
-        require(str(health.get("url", "")).startswith(("http://", "https://")), "HTTP health URL invalid")
-        require(isinstance(health.get("expected_status"), int), "HTTP expected_status missing")
+        health_url = str(health.get("url", ""))
+        require(
+            health_url.startswith(("http://", "https://")),
+            "HTTP health URL invalid",
+        )
+        require(
+            isinstance(health.get("expected_status"), int),
+            "HTTP expected_status missing",
+        )
+
+        if host == "ids-01":
+            require(
+                health_url.startswith("http://127.0.0.1:")
+                or health_url.startswith("http://localhost:"),
+                "ids-01 HTTP health URL must be local",
+            )
 
     protected = set(protection.get("containers") or [])
-    require({"jenkins", "jenkins-docker"}.issubset(protected), "Jenkins and Jenkins-DinD must be protected")
+
+    if host == "TestServer":
+        require(
+            {"jenkins", "jenkins-docker"}.issubset(protected),
+            "Jenkins and Jenkins-DinD must be protected",
+        )
+    else:
+        require(
+            {"grafana", "loki"}.issubset(protected),
+            "ids-01 monitoring protection must include Grafana and Loki",
+        )
     require(protection.get("all_other_containers_unchanged") is True, "all unrelated containers must remain unchanged")
     compare = set(protection.get("compare") or [])
     require({"container_id", "restart_count"}.issubset(compare), "protected comparison must include ID and restart count")
