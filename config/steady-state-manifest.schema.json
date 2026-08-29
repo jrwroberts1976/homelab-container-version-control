@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jrwroberts1976/homelab-container-version-control/config/steady-state-manifest.schema.json",
+  "title": "Stage 6 steady-state service manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact",
+    "mode",
+    "authority",
+    "service",
+    "desired",
+    "runtime",
+    "health"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "artifact": {"const": "service-steady-state-manifest"},
+    "mode": {"const": "stage6-steady-state"},
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "compose_sha256"],
+      "properties": {
+        "repository": {"const": "docker-env"},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "compose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "host", "container", "image_type", "risk_class", "compose"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "host": {"const": "TestServer"},
+        "container": {"type": "string", "minLength": 1},
+        "image_type": {"const": "registry-image"},
+        "risk_class": {"enum": ["low", "medium"]},
+        "compose": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["project_directory", "project", "compose_file", "service", "image_variable"],
+          "properties": {
+            "project_directory": {"type": "string", "pattern": "^/home/james/docker/"},
+            "project": {"type": "string", "minLength": 1},
+            "compose_file": {"type": "string", "pattern": "^/home/james/docker/"},
+            "service": {"type": "string", "minLength": 1},
+            "image_variable": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}
+          }
+        }
+      }
+    },
+    "desired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "image_repository",
+        "configured_image",
+        "immutable_ref",
+        "index_digest",
+        "local_image_id",
+        "platform",
+        "metadata_verification"
+      ],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "image_repository": {"type": "string", "minLength": 1},
+        "configured_image": {"type": "string", "minLength": 1},
+        "immutable_ref": {"type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+        "index_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "local_image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "architecture"],
+          "properties": {
+            "os": {"const": "linux"},
+            "architecture": {"enum": ["arm64", "amd64"]}
+          }
+        },
+        "metadata_verification": {"enum": ["digest-pinned", "oci-labels"]},
+        "revision": {"type": ["string", "null"]},
+        "created": {"type": ["string", "null"]}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "networks",
+        "published_ports",
+        "mounts",
+        "user",
+        "privileged",
+        "readonly_rootfs",
+        "restart_policy",
+        "devices_allowed",
+        "docker_socket_allowed"
+      ],
+      "properties": {
+        "networks": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "published_ports": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host_ip", "host_port", "container_port", "protocol"],
+            "properties": {
+              "host_ip": {"type": "string"},
+              "host_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+              "container_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+              "protocol": {"enum": ["tcp", "udp"]}
+            }
+          }
+        },
+        "mounts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "source", "destination", "rw", "source_kind", "sha256"],
+            "properties": {
+              "type": {"const": "bind"},
+              "source": {"type": "string", "minLength": 1},
+              "destination": {"type": "string", "minLength": 1},
+              "rw": {"type": "boolean"},
+              "source_kind": {"enum": ["file", "directory", "socket"]},
+              "sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        },
+        "user": {"type": "string"},
+        "privileged": {"type": "boolean"},
+        "readonly_rootfs": {"type": "boolean"},
+        "restart_policy": {"type": "string", "minLength": 1},
+        "devices_allowed": {"type": "boolean"},
+        "docker_socket_allowed": {"type": "boolean"}
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "expected"],
+      "properties": {
+        "strategy": {"enum": ["docker-health", "http"]},
+        "expected": {"type": "string", "minLength": 1},
+        "url": {"type": ["string", "null"]},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 900}
+      }
+    },
+    "protection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "containers": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    }
+  }
+}
