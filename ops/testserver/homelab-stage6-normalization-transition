@@ -1,0 +1,665 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+MANIFEST_DIR="/etc/homelab-stage6/image-normalization"
+VALIDATOR="/usr/local/libexec/homelab-stage6-validate-image-normalization"
+INSPECTOR="/usr/local/libexec/homelab-stage6-normalization-inspect"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage6-normalization-transition"
+
+STATE_ROOT="/var/lib/homelab-stage6/image-normalization-state"
+
+fail() {
+    printf 'FAIL: %s\n' "$1" >&2
+    exit 2
+}
+
+require_secure_root_file() {
+    local file="$1"
+
+    [ -f "$file" ] ||
+        fail "required root-owned file missing: $file"
+
+    [ ! -L "$file" ] ||
+        fail "root-owned file must not be a symlink: $file"
+
+    [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+        fail "file is not root:root: $file"
+
+    if find "$file" \
+        -maxdepth 0 \
+        -perm /022 \
+        -print -quit |
+       grep -q .
+    then
+        fail "file is group/other writable: $file"
+    fi
+}
+
+require_secure_root_dir() {
+    local dir="$1"
+
+    [ -d "$dir" ] ||
+        fail "required root-owned directory missing: $dir"
+
+    [ ! -L "$dir" ] ||
+        fail "root-owned directory must not be a symlink: $dir"
+
+    [ "$(stat -c '%U:%G' "$dir")" = "root:root" ] ||
+        fail "directory is not root:root: $dir"
+
+    if find "$dir" \
+        -maxdepth 0 \
+        -perm /022 \
+        -print -quit |
+       grep -q .
+    then
+        fail "directory is group/other writable: $dir"
+    fi
+}
+
+manifest_string() {
+    local query="$1"
+
+    jq -er \
+        "$query | strings | select(length > 0)" \
+        "$MANIFEST" 2>/dev/null ||
+        fail "manifest value unavailable: $query"
+}
+
+load_manifest() {
+    MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"
+
+    require_secure_root_file "$MANIFEST"
+
+    "$VALIDATOR" "$MANIFEST" >/dev/null ||
+        fail "normalization manifest validation failed"
+
+    [ "$(manifest_string '.service.name')" = "$SERVICE" ] ||
+        fail "manifest service mismatch"
+
+    MANIFEST_HOST="$(
+        manifest_string '.service.host'
+    )"
+
+    CURRENT_HOST="$(
+        hostname -s
+    )"
+
+    case "$MANIFEST_HOST" in
+        TestServer|ids-01)
+            ;;
+        *)
+            fail "manifest host is not a reviewed Docker host"
+            ;;
+    esac
+
+    [ "$CURRENT_HOST" = "$MANIFEST_HOST" ] ||
+        fail "manifest host does not match local machine"
+
+    jq -e '
+      .execution.human_approval_required == true
+      and
+        .execution.post_approval_reinspection_required == true
+      and .execution.one_shot_required == true
+      and .execution.target_must_be_local_before_arm == true
+      and .execution.deployment_pull_allowed == false
+      and .execution.rollback_required == true
+      and
+        .execution.rollback_ref_type ==
+        "tagged-source-configuration"
+      and
+        .execution.normalization_kind ==
+        "tag-to-immutable-same-content"
+    ' "$MANIFEST" >/dev/null ||
+        fail "normalization execution safety contract invalid"
+
+    MANIFEST_SHA="$(
+        sha256sum "$MANIFEST" |
+        awk '{print $1}'
+    )"
+
+    AUTHORITY_REVISION="$(
+        manifest_string '.authority.revision'
+    )"
+
+    COMPOSE_SHA="$(
+        manifest_string '.authority.compose_sha256'
+    )"
+
+    SOURCE_REF="$(
+        manifest_string '.image.source.configured_image'
+    )"
+
+    SOURCE_LOCAL_ID="$(
+        manifest_string '.image.source.local_image_id'
+    )"
+
+    TARGET_REF="$(
+        manifest_string '.image.target.configured_image'
+    )"
+
+    TARGET_DIGEST="$(
+        manifest_string '.image.target.index_digest'
+    )"
+
+    TARGET_LOCAL_ID="$(
+        manifest_string '.image.target.local_image_id'
+    )"
+
+    ROLLBACK_REF="$(
+        manifest_string '.image.rollback.configured_image'
+    )"
+
+    ROLLBACK_LOCAL_ID="$(
+        manifest_string '.image.rollback.local_image_id'
+    )"
+
+    [ "$SOURCE_LOCAL_ID" = "$TARGET_LOCAL_ID" ] ||
+        fail "normalization source/target content differs"
+
+    [ "$SOURCE_LOCAL_ID" = "$ROLLBACK_LOCAL_ID" ] ||
+        fail "normalization rollback content differs"
+
+    [ "$ROLLBACK_REF" = "$SOURCE_REF" ] ||
+        fail "rollback is not exact tagged source configuration"
+
+    NORMALIZATION_ID="stage6-normalize-${SERVICE}-${TARGET_DIGEST#sha256:}"
+
+    SERVICE_STATE_DIR="${STATE_ROOT}/${SERVICE}"
+    APPROVAL_FILE="${SERVICE_STATE_DIR}/approval.json"
+    CONSUMED_FILE="${SERVICE_STATE_DIR}/${NORMALIZATION_ID}.consumed"
+}
+
+require_installed_context() {
+    [ "$(id -u)" -eq 0 ] ||
+        fail "normalization transition requires root"
+
+    [ "$(readlink -f "$0")" = "$INSTALLED_SELF" ] ||
+        fail "normalization transition is not running from reviewed installed path"
+
+    require_secure_root_file "$INSTALLED_SELF"
+    require_secure_root_file "$VALIDATOR"
+    require_secure_root_file "$INSPECTOR"
+
+    require_secure_root_dir "/var/lib/homelab-stage6"
+}
+
+run_preapproval_inspection() {
+    local artifact
+
+    artifact="$(
+        mktemp \
+            /tmp/stage6-normalization-preapproval.XXXXXX
+    )"
+
+    if ! "$INSPECTOR" "$SERVICE" > "$artifact"; then
+        rm -f -- "$artifact"
+        fail "normalization pre-approval inspection failed"
+    fi
+
+    jq -e \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg manifest_sha "$MANIFEST_SHA" \
+        --arg authority "$AUTHORITY_REVISION" \
+        --arg compose_sha "$COMPOSE_SHA" \
+        --arg source_ref "$SOURCE_REF" \
+        --arg source_id "$SOURCE_LOCAL_ID" \
+        --arg target_ref "$TARGET_REF" \
+        --arg target_id "$TARGET_LOCAL_ID" \
+        --arg rollback_ref "$ROLLBACK_REF" \
+        --arg rollback_id "$ROLLBACK_LOCAL_ID" '
+          .schema_version == 1
+          and
+            .artifact ==
+            "service-image-normalization-inspection"
+          and .mode == "read-only"
+          and .service == $service
+          and .host == $host
+
+          and .manifest.sha256 == $manifest_sha
+
+          and .authority.repository == "docker-env"
+          and .authority.revision == $authority
+          and .authority.compose_sha256 == $compose_sha
+          and .authority.clean == true
+
+          and .compose.source_resolved_image == $source_ref
+          and .compose.target_resolved_image == $target_ref
+          and .compose.verified == true
+
+          and .image.source.configured_image == $source_ref
+          and .image.source.local_image_id == $source_id
+
+          and .image.target.configured_image == $target_ref
+          and .image.target.local_image_id == $target_id
+
+          and .image.rollback.configured_image == $rollback_ref
+          and .image.rollback.local_image_id == $rollback_id
+
+          and .image.same_content == true
+          and .image.target_local == true
+
+          and .runtime.configured_image == $source_ref
+          and .runtime.image_id == $source_id
+          and .runtime.running == true
+
+          and .health.verified == true
+
+          and
+            (
+              [.protected_containers[].running]
+              | all
+            )
+
+          and .mutation_allowed == false
+
+          and .normalization.allowed == false
+          and .normalization.performed == false
+
+          and .rollback.allowed == false
+          and .rollback.performed == false
+
+          and .approval.required == true
+          and .approval.present == false
+
+          and
+            .result ==
+            "normalization-preflight-verified"
+        ' "$artifact" >/dev/null || {
+            rm -f -- "$artifact"
+            fail "pre-approval inspection artifact failed approval gate"
+        }
+
+    INSPECTION_SHA="$(
+        sha256sum "$artifact" |
+        awk '{print $1}'
+    )"
+
+    BASELINE_JSON="$(
+        jq -S -c '
+          {
+            manifest_sha256:
+              .manifest.sha256,
+
+            authority:{
+              revision:
+                .authority.revision,
+              compose_sha256:
+                .authority.compose_sha256
+            },
+
+            image:{
+              source_ref:
+                .image.source.configured_image,
+              source_local_image_id:
+                .image.source.local_image_id,
+
+              target_ref:
+                .image.target.configured_image,
+              target_local_image_id:
+                .image.target.local_image_id,
+
+              rollback_ref:
+                .image.rollback.configured_image,
+              rollback_local_image_id:
+                .image.rollback.local_image_id
+            },
+
+            runtime:{
+              container_id:
+                .runtime.container_id,
+              configured_image:
+                .runtime.configured_image,
+              image_id:
+                .runtime.image_id,
+              restart_count:
+                .runtime.restart_count,
+              networks:
+                .runtime.networks,
+              published_ports:
+                .runtime.published_ports,
+              mounts:
+                .runtime.mounts
+            },
+
+            health:{
+              strategy:
+                .health.strategy,
+              resolved_url:
+                .health.resolved_url,
+              status:
+                .health.status,
+              marker:
+                .health.marker,
+              verified:
+                .health.verified
+            },
+
+            protected_containers:
+              (
+                [
+                  .protected_containers[]
+                  | {
+                      name,
+                      container_id,
+                      restart_count,
+                      running
+                    }
+                ]
+                | sort_by(.name)
+              )
+          }
+        ' "$artifact"
+    )"
+
+    BASELINE_SHA="$(
+        printf '%s' "$BASELINE_JSON" |
+        sha256sum |
+        awk '{print $1}'
+    )"
+
+    rm -f -- "$artifact"
+}
+
+verify_approval_file() {
+    require_secure_root_file "$APPROVAL_FILE"
+
+    jq -e \
+        --arg normalization_id "$NORMALIZATION_ID" \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg manifest_sha "$MANIFEST_SHA" \
+        --arg inspection_sha "$INSPECTION_SHA" \
+        --arg baseline_sha "$BASELINE_SHA" '
+          .schema_version == 1
+          and
+            .artifact ==
+            "stage6-image-normalization-approval"
+          and .normalization_id == $normalization_id
+          and .service == $service
+          and .host == $host
+
+          and .manifest_sha256 == $manifest_sha
+          and
+            .preapproval_inspection_sha256 ==
+            $inspection_sha
+          and
+            .zero_drift_baseline_sha256 ==
+            $baseline_sha
+
+          and .approval.required == true
+          and .approval.granted == true
+
+          and
+            .post_approval_reinspection_required ==
+            true
+
+          and .one_shot_required == true
+          and .deployment_pull_allowed == false
+
+          and .container_mutation_performed == false
+          and .normalization_performed == false
+        ' "$APPROVAL_FILE" >/dev/null ||
+        fail "approval state verification failed"
+}
+
+arm() {
+    local tmp
+
+    [ ! -e "$APPROVAL_FILE" ] ||
+        fail "normalization is already armed"
+
+    [ ! -e "$CONSUMED_FILE" ] ||
+        fail "normalization ID is already consumed"
+
+    run_preapproval_inspection
+
+    install \
+        -d \
+        -o root \
+        -g root \
+        -m 0700 \
+        "$STATE_ROOT"
+
+    install \
+        -d \
+        -o root \
+        -g root \
+        -m 0700 \
+        "$SERVICE_STATE_DIR"
+
+    require_secure_root_dir "$STATE_ROOT"
+    require_secure_root_dir "$SERVICE_STATE_DIR"
+
+    tmp="$(
+        mktemp \
+            "${SERVICE_STATE_DIR}/approval.tmp.XXXXXX"
+    )"
+
+    jq -n \
+        --arg normalization_id "$NORMALIZATION_ID" \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg manifest_sha "$MANIFEST_SHA" \
+        --arg authority "$AUTHORITY_REVISION" \
+        --arg compose_sha "$COMPOSE_SHA" \
+        --arg source_ref "$SOURCE_REF" \
+        --arg target_ref "$TARGET_REF" \
+        --arg rollback_ref "$ROLLBACK_REF" \
+        --arg inspection_sha "$INSPECTION_SHA" \
+        --arg baseline_sha "$BASELINE_SHA" \
+        --argjson baseline "$BASELINE_JSON" '
+          {
+            schema_version:1,
+            artifact:
+              "stage6-image-normalization-approval",
+
+            normalization_id:
+              $normalization_id,
+
+            service:
+              $service,
+
+            host:
+              $host,
+
+            manifest_sha256:
+              $manifest_sha,
+
+            authority:{
+              revision:
+                $authority,
+              compose_sha256:
+                $compose_sha
+            },
+
+            image:{
+              source_ref:
+                $source_ref,
+              target_ref:
+                $target_ref,
+              rollback_ref:
+                $rollback_ref
+            },
+
+            preapproval_inspection_sha256:
+              $inspection_sha,
+
+            zero_drift_baseline_sha256:
+              $baseline_sha,
+
+            zero_drift_baseline:
+              $baseline,
+
+            approval:{
+              required:true,
+              granted:true
+            },
+
+            post_approval_reinspection_required:
+              true,
+
+            one_shot_required:
+              true,
+
+            deployment_pull_allowed:
+              false,
+
+            container_mutation_performed:
+              false,
+
+            normalization_performed:
+              false
+          }
+        ' > "$tmp"
+
+    chown root:root "$tmp"
+    chmod 0600 "$tmp"
+
+    mv -f \
+        "$tmp" \
+        "$APPROVAL_FILE"
+
+    verify_approval_file
+
+    jq -n \
+        --arg normalization_id "$NORMALIZATION_ID" \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg approval_file "$APPROVAL_FILE" \
+        --arg manifest_sha "$MANIFEST_SHA" \
+        --arg inspection_sha "$INSPECTION_SHA" \
+        --arg baseline_sha "$BASELINE_SHA" '
+          {
+            schema_version:1,
+            artifact:
+              "stage6-image-normalization-transition",
+
+            action:"arm",
+
+            normalization_id:
+              $normalization_id,
+
+            service:
+              $service,
+
+            host:
+              $host,
+
+            approval_file:
+              $approval_file,
+
+            manifest_sha256:
+              $manifest_sha,
+
+            preapproval_inspection_sha256:
+              $inspection_sha,
+
+            zero_drift_baseline_sha256:
+              $baseline_sha,
+
+            human_approval_present:true,
+
+            post_approval_reinspection_required:true,
+
+            container_mutation_performed:false,
+
+            normalization_authority:true,
+
+            normalization_performed:false,
+
+            result:"armed"
+          }
+        '
+}
+
+disarm() {
+    local approval_id
+
+    require_secure_root_dir "$STATE_ROOT"
+    require_secure_root_dir "$SERVICE_STATE_DIR"
+    require_secure_root_file "$APPROVAL_FILE"
+
+    [ ! -e "$CONSUMED_FILE" ] ||
+        fail "consumed normalization cannot be disarmed by approval transition"
+
+    approval_id="$(
+        jq -er \
+            '.normalization_id' \
+            "$APPROVAL_FILE"
+    )" ||
+        fail "approval normalization ID unavailable"
+
+    [ "$approval_id" = "$NORMALIZATION_ID" ] ||
+        fail "approval normalization ID mismatch"
+
+    rm -f -- "$APPROVAL_FILE"
+
+    [ ! -e "$APPROVAL_FILE" ] ||
+        fail "approval file remained after disarm"
+
+    jq -n \
+        --arg normalization_id "$NORMALIZATION_ID" \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" '
+          {
+            schema_version:1,
+            artifact:
+              "stage6-image-normalization-transition",
+
+            action:"disarm",
+
+            normalization_id:
+              $normalization_id,
+
+            service:
+              $service,
+
+            host:
+              $host,
+
+            human_approval_present:false,
+
+            container_mutation_performed:false,
+
+            normalization_authority:false,
+
+            normalization_performed:false,
+
+            result:"disarmed"
+          }
+        '
+}
+
+[ "$(id -u)" -eq 0 ] ||
+    fail "normalization transition requires root"
+
+[ "$#" -eq 2 ] ||
+    fail "usage: homelab-stage6-normalization-transition ACTION SERVICE"
+
+ACTION="$1"
+SERVICE="$2"
+
+[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
+    fail "invalid service name"
+
+require_installed_context
+load_manifest
+
+case "$ACTION" in
+    arm)
+        arm
+        ;;
+
+    disarm)
+        disarm
+        ;;
+
+    *)
+        fail "action not permitted"
+        ;;
+esac
