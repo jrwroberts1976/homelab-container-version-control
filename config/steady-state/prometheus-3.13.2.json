@@ -4,8 +4,8 @@
   "mode": "stage6-steady-state",
   "authority": {
     "repository": "docker-env",
-    "revision": "788b302c67fc21618d471ab7951ebf379d2a5593",
-    "compose_sha256": "bcf38b612b8319fef2e3d077f3a3e70599cbe0ddbd26a8789f35ca1fd2836b1d"
+    "revision": "d1ca9a5e10d151893573fd97d6a5c282ba912a1e",
+    "compose_sha256": "b8a895bd8e23c9f528cf9209f70368be42bf53f8044cbd99ef35eae188e3d68b"
   },
   "service": {
     "name": "prometheus",
