@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VALIDATOR="$ROOT/scripts/validate-stage6-steady-state-manifest.py"
 INSPECTOR="$ROOT/ops/testserver/homelab-stage6-steady-inspect"
 MANIFEST="$ROOT/config/steady-state/homepage-2.1.2.json"
+PROMETHEUS_MANIFEST="$ROOT/config/steady-state/prometheus-3.13.2.json"
 SCHEMA="$ROOT/config/steady-state-manifest.schema.json"
 
 fail() {
@@ -15,10 +16,11 @@ fail() {
 expect_rejected() {
     local name="$1"
     local filter="$2"
+    local source="${3:-$MANIFEST}"
     local tmp
     tmp="$(mktemp)"
     trap 'rm -f "$tmp"' RETURN
-    jq "$filter" "$MANIFEST" > "$tmp"
+    jq "$filter" "$source" > "$tmp"
     if python3 "$VALIDATOR" "$tmp" >/dev/null 2>&1; then
         fail "$name was accepted"
     fi
@@ -32,7 +34,21 @@ bash -n "$INSPECTOR" || fail "inspector shell syntax"
 jq -e . "$SCHEMA" >/dev/null || fail "schema JSON invalid"
 jq -e . "$MANIFEST" >/dev/null || fail "Homepage steady-state JSON invalid"
 python3 "$VALIDATOR" "$MANIFEST" >/dev/null || fail "Homepage steady-state manifest validation"
-echo "PASS: syntax and positive manifest validation"
+
+IDS01_MANIFEST="$(mktemp)"
+trap 'rm -f "$IDS01_MANIFEST"' EXIT
+
+jq '
+  .service.host = "ids-01"
+  | .authority.compose_path = "hosts/ids-01/stacks/monitoring/docker-compose.yml"
+  | .desired.platform.architecture = "amd64"
+  | .health.url = "http://127.0.0.1:9090/-/ready"
+' "$PROMETHEUS_MANIFEST" > "$IDS01_MANIFEST"
+
+python3 "$VALIDATOR" "$IDS01_MANIFEST" >/dev/null ||
+    fail "ids-01 synthetic steady-state manifest validation"
+
+echo "PASS: syntax and positive TestServer + ids-01 manifest validation"
 
 BANNED=(
   'docker pull'
@@ -87,7 +103,12 @@ expect_rejected "low-risk Docker socket" '.service.risk_class = "low"'
 expect_rejected "writable Docker socket" '(.runtime.mounts[] | select(.destination == "/var/run/docker.sock") | .rw) = true'
 expect_rejected "alternate Docker socket source" '(.runtime.mounts[] | select(.destination == "/var/run/docker.sock") | .source) = "/tmp/docker.sock"'
 expect_rejected "device-backed workload" '.runtime.devices_allowed = true'
-expect_rejected "wrong host backend" '.service.host = "ids-01"'
+expect_rejected "unsupported Docker host" '.service.host = "k3s-node-01"'
+expect_rejected "ids-01 missing authority compose path" 'del(.authority.compose_path)' "$IDS01_MANIFEST"
+expect_rejected "ids-01 absolute authority compose path" '.authority.compose_path = "/tmp/docker-compose.yml"' "$IDS01_MANIFEST"
+expect_rejected "ids-01 authority path traversal" '.authority.compose_path = "hosts/ids-01/../monitoring/docker-compose.yml"' "$IDS01_MANIFEST"
+expect_rejected "ids-01 wrong authority subtree" '.authority.compose_path = "stacks/monitoring/docker-compose.yml"' "$IDS01_MANIFEST"
+expect_rejected "ids-01 TestServer-only health endpoint" '.health.url = "http://192.168.2.220:9090/-/ready"' "$IDS01_MANIFEST"
 expect_rejected "unpinned authority" '.authority.revision = "main"'
 expect_rejected "Compose outside live root" '.service.compose.project_directory = "/tmp/x" | .service.compose.compose_file = "/tmp/x/docker-compose.yml"'
 

@@ -13,6 +13,7 @@ SERVICE_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 IMAGE_VARIABLE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 LIVE_ROOT = "/home/james/docker/"
 DOCKER_SOCKET = "/var/run/docker.sock"
+SUPPORTED_DOCKER_HOSTS = {"TestServer", "ids-01"}
 
 
 def fail(message: str) -> None:
@@ -45,11 +46,47 @@ def validate_manifest(manifest: dict) -> None:
     require(bool(COMMIT_RE.fullmatch(str(authority.get("revision", "")))), "authority revision must be exact commit")
     require(bool(SHA_RE.fullmatch(str(authority.get("compose_sha256", "")))), "authority compose SHA-256 invalid")
 
+    authority_compose_path = authority.get("compose_path")
+    if authority_compose_path is not None:
+        require(
+            isinstance(authority_compose_path, str) and authority_compose_path,
+            "authority compose path must be a non-empty string",
+        )
+        authority_path = Path(authority_compose_path)
+        require(
+            not authority_path.is_absolute(),
+            "authority compose path must be relative",
+        )
+        require(
+            ".." not in authority_path.parts,
+            "authority compose path traversal rejected",
+        )
+
     service = manifest.get("service") or {}
     service_name = str(service.get("name", ""))
     require(bool(SERVICE_RE.fullmatch(service_name)), "service name invalid")
-    require(service.get("host") == "TestServer", "initial steady-state backend is TestServer only")
-    require(service.get("image_type") == "registry-image", "initial steady-state backend supports registry-image only")
+    host = str(service.get("host", ""))
+    require(
+        host in SUPPORTED_DOCKER_HOSTS,
+        "steady-state Docker host is not reviewed",
+    )
+
+    if host == "ids-01":
+        require(
+            isinstance(authority_compose_path, str) and authority_compose_path,
+            "ids-01 requires reviewed authority compose path",
+        )
+        require(
+            authority_compose_path.startswith("hosts/ids-01/"),
+            "ids-01 authority compose path must remain under hosts/ids-01",
+        )
+    elif authority_compose_path is not None:
+        require(
+            authority_compose_path.startswith("stacks/"),
+            "TestServer authority compose path must remain under stacks",
+        )
+
+    require(service.get("image_type") == "registry-image", "steady-state backend supports registry-image only")
     require(service.get("risk_class") in {"low", "medium"}, "risk class must be low or medium")
     require(isinstance(service.get("container"), str) and service["container"], "container missing")
 
@@ -130,11 +167,19 @@ def validate_manifest(manifest: dict) -> None:
     require(isinstance(health.get("expected"), str) and health["expected"], "health expected value missing")
     if strategy == "http":
         url = str(health.get("url") or "")
-        require(
+        local_http = (
             url.startswith("http://127.0.0.1:")
             or url.startswith("http://localhost:")
-            or url.startswith("http://192.168.2.220:"),
-            "HTTP health URL must be fixed local TestServer endpoint",
+        )
+
+        if host == "TestServer":
+            allowed_http = local_http or url.startswith("http://192.168.2.220:")
+        else:
+            allowed_http = local_http
+
+        require(
+            allowed_http,
+            "HTTP health URL must be an approved local endpoint",
         )
 
     protection = manifest.get("protection") or {}
