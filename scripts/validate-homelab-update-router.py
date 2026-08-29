@@ -151,7 +151,7 @@ def test_homepage_adapter_without_host_contact() -> None:
     positional, keyword = runner.call_args
     assert positional[0] == [str(module.STEADY_INSPECTOR), "homepage"]
     assert keyword["shell"] is False
-    assert keyword["stdin"] is module.subprocess.DEVNULL
+    assert keyword["stdin"] == module.subprocess.DEVNULL
     assert keyword["check"] is False
     assert keyword["env"] == module.FIXED_ENV
     print("PASS: Homepage adapter uses fixed argv/no shell under mocked read-only evidence")
