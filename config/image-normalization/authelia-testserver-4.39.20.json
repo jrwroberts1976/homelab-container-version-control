@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "artifact": "service-image-normalization-manifest",
+  "mode": "stage6-image-ref-normalization",
+  "service": {
+    "name": "authelia",
+    "container": "authelia",
+    "host": "TestServer",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project": "proxy-auth",
+      "service": "authelia",
+      "project_directory": "/home/james/docker/stacks/proxy-auth",
+      "compose_file": "/home/james/docker/stacks/proxy-auth/docker-compose.yml",
+      "image_variable": "AUTHELIA_IMAGE"
+    }
+  },
+  "authority": {
+    "repository": "docker-env",
+    "revision": "72495a22a26a1c67c9604e1de2f8306a1b7f4621",
+    "compose_sha256": "480f9809c738a3e57815ed7c45f047a320a908bf9f6daba3668ec63eb4a7f945",
+    "compose_path": "stacks/proxy-auth/docker-compose.yml"
+  },
+  "image": {
+    "version": "4.39.20",
+    "repository": "authelia/authelia",
+    "source": {
+      "configured_image": "authelia/authelia:4.39.20",
+      "local_image_id": "sha256:8dc13a9a7636e7a49c3227e99c0a3f3bcd332f62073f07f2237518ea0c32aef9"
+    },
+    "target": {
+      "configured_image": "authelia/authelia@sha256:1b363e9279e742397966333f364e0876ae02bf5c876de73e83af6d48c57ff51b",
+      "index_digest": "sha256:1b363e9279e742397966333f364e0876ae02bf5c876de73e83af6d48c57ff51b",
+      "local_image_id": "sha256:8dc13a9a7636e7a49c3227e99c0a3f3bcd332f62073f07f2237518ea0c32aef9"
+    },
+    "rollback": {
+      "configured_image": "authelia/authelia:4.39.20",
+      "local_image_id": "sha256:8dc13a9a7636e7a49c3227e99c0a3f3bcd332f62073f07f2237518ea0c32aef9"
+    },
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    },
+    "same_content_required": true
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [
+      {
+        "host_ip": "192.168.2.220",
+        "host_port": 9091,
+        "container_port": 9091,
+        "protocol": "tcp"
+      }
+    ],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/proxy-auth/authelia/config",
+        "destination": "/config",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      }
+    ],
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false,
+    "compose_execution": {
+      "no_deps": true,
+      "no_build": true,
+      "pull": "never",
+      "force_recreate": true
+    }
+  },
+  "health": {
+    "strategy": "http",
+    "url": "http://192.168.2.220:9091/api/health",
+    "expected_status": 200,
+    "marker": null,
+    "timeout_seconds": 30
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ],
+    "compare": [
+      "container_id",
+      "restart_count"
+    ],
+    "all_other_containers_unchanged": true
+  },
+  "execution": {
+    "human_approval_required": true,
+    "post_approval_reinspection_required": true,
+    "one_shot_required": true,
+    "target_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "rollback_required": true,
+    "rollback_ref_type": "tagged-source-configuration",
+    "normalization_kind": "tag-to-immutable-same-content"
+  }
+}

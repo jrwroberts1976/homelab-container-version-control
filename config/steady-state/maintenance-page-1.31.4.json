@@ -4,7 +4,7 @@
   "mode": "stage6-steady-state",
   "authority": {
     "repository": "docker-env",
-    "revision": "d1ca9a5e10d151893573fd97d6a5c282ba912a1e",
+    "revision": "72495a22a26a1c67c9604e1de2f8306a1b7f4621",
     "compose_sha256": "26fb63ff74360932f0dbf9eb27876c67bb3212767aaa6a11ea6c3370750eeadf"
   },
   "service": {
