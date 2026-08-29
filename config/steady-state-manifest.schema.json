@@ -25,7 +25,11 @@
       "properties": {
         "repository": {"const": "docker-env"},
         "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-        "compose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "compose_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "compose_path": {
+          "type": "string",
+          "pattern": "^(?:stacks|hosts/[A-Za-z0-9.-]+)/[A-Za-z0-9._/-]+$"
+        }
       }
     },
     "service": {
@@ -34,7 +38,7 @@
       "required": ["name", "host", "container", "image_type", "risk_class", "compose"],
       "properties": {
         "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-        "host": {"const": "TestServer"},
+        "host": {"enum": ["TestServer", "ids-01"]},
         "container": {"type": "string", "minLength": 1},
         "image_type": {"const": "registry-image"},
         "risk_class": {"enum": ["low", "medium"]},
