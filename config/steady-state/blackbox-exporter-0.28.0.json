@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "artifact": "service-steady-state-manifest",
+  "mode": "stage6-steady-state",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "d1ca9a5e10d151893573fd97d6a5c282ba912a1e",
+    "compose_sha256": "b8a895bd8e23c9f528cf9209f70368be42bf53f8044cbd99ef35eae188e3d68b"
+  },
+  "service": {
+    "name": "blackbox-exporter",
+    "host": "TestServer",
+    "container": "blackbox-exporter",
+    "image_type": "registry-image",
+    "risk_class": "low",
+    "compose": {
+      "project_directory": "/home/james/docker/stacks/monitoring",
+      "project": "monitoring",
+      "compose_file": "/home/james/docker/stacks/monitoring/docker-compose.yml",
+      "service": "blackbox-exporter",
+      "image_variable": "BLACKBOX_EXPORTER_IMAGE"
+    }
+  },
+  "desired": {
+    "version": "0.28.0",
+    "image_repository": "prom/blackbox-exporter",
+    "configured_image": "prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc",
+    "immutable_ref": "prom/blackbox-exporter@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc",
+    "index_digest": "sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc",
+    "local_image_id": "sha256:66a289aee116c17f2396de73f97328f55eb4bb8fc53d8842a171eddc54685445",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    },
+    "metadata_verification": "digest-pinned"
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [
+      {
+        "host_ip": "192.168.2.220",
+        "host_port": 9115,
+        "container_port": 9115,
+        "protocol": "tcp"
+      }
+    ],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/monitoring/blackbox/blackbox.yml",
+        "destination": "/etc/blackbox_exporter/config.yml",
+        "rw": false,
+        "source_kind": "file",
+        "sha256": "ab065eba6778f9a0b3b85d1c85712c47b36c342574b9d05f4d29cfa9a7098836"
+      }
+    ],
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false
+  },
+  "health": {
+    "strategy": "http",
+    "expected": "200",
+    "url": "http://192.168.2.220:9115/-/healthy",
+    "timeout_seconds": 60
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ]
+  }
+}
