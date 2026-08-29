@@ -18,8 +18,8 @@
   },
   "authority": {
     "repository": "docker-env",
-    "revision": "72495a22a26a1c67c9604e1de2f8306a1b7f4621",
-    "compose_sha256": "480f9809c738a3e57815ed7c45f047a320a908bf9f6daba3668ec63eb4a7f945",
+    "revision": "d578c523ab7553bf079b729d3c3b0b95705344ba",
+    "compose_sha256": "d3b406bc9923c4b138a14a589080376f575da3de206b74560fa225c2dd346daa",
     "compose_path": "stacks/proxy-auth/docker-compose.yml"
   },
   "image": {
