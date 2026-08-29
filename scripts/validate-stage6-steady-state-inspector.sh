@@ -36,7 +36,8 @@ jq -e . "$MANIFEST" >/dev/null || fail "Homepage steady-state JSON invalid"
 python3 "$VALIDATOR" "$MANIFEST" >/dev/null || fail "Homepage steady-state manifest validation"
 
 IDS01_MANIFEST="$(mktemp)"
-trap 'rm -f "$IDS01_MANIFEST"' EXIT
+CONTENT_MANIFEST="$(mktemp)"
+trap 'rm -f "$IDS01_MANIFEST" "$CONTENT_MANIFEST"' EXIT
 
 jq '
   .service.host = "ids-01"
@@ -48,7 +49,47 @@ jq '
 python3 "$VALIDATOR" "$IDS01_MANIFEST" >/dev/null ||
     fail "ids-01 synthetic steady-state manifest validation"
 
-echo "PASS: syntax and positive TestServer + ids-01 manifest validation"
+jq '
+  .runtime.mounts = [
+    {
+      "type": "bind",
+      "source": "/home/james/docker/data/monitoring/prometheus",
+      "destination": "/etc/prometheus",
+      "rw": true,
+      "source_kind": "directory",
+      "sha256": null
+    },
+    {
+      "type": "bind",
+      "source": "/home/james/docker/data/monitoring/prometheus/data",
+      "destination": "/prometheus",
+      "rw": true,
+      "source_kind": "directory",
+      "sha256": null
+    }
+  ]
+  | .runtime.content_checks = [
+    {
+      "mount_source":
+        "/home/james/docker/data/monitoring/prometheus",
+      "relative_path": "prometheus.yml",
+      "sha256":
+        "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "mount_source":
+        "/home/james/docker/data/monitoring/prometheus",
+      "relative_path": "rules/host-health.yml",
+      "sha256":
+        "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ]
+' "$IDS01_MANIFEST" > "$CONTENT_MANIFEST"
+
+python3 "$VALIDATOR" "$CONTENT_MANIFEST" >/dev/null ||
+    fail "ids-01 steady-state content-check manifest validation"
+
+echo "PASS: syntax and positive TestServer + ids-01 + content-check validation"
 
 BANNED=(
   'docker pull'
@@ -95,6 +136,14 @@ grep -Fq 'git -C "$AUTHORITY_ROOT" status --porcelain' "$INSPECTOR" || fail "aut
 grep -Fq 'mutation_allowed:false' "$INSPECTOR" || fail "read-only output assertion missing"
 grep -Fq 'allowed:false,performed:false' "$INSPECTOR" || fail "deployment-disabled output assertion missing"
 grep -Fq 'steady-state-verified' "$INSPECTOR" || fail "steady-state result missing"
+grep -Fq 'verify_content_checks' "$INSPECTOR" || fail "content-check execution gate missing"
+grep -Fq 'CONTENT_CHECKS_JSON' "$INSPECTOR" || fail "content-check evidence missing"
+grep -Fq 'content check SHA-256 mismatch' "$INSPECTOR" || fail "content-check hash failure gate missing"
+grep -Fq -- '--arg host "$MANIFEST_HOST"' "$INSPECTOR" || fail "dynamic host evidence missing"
+
+if grep -Fq -- '--arg host "TestServer"' "$INSPECTOR"; then
+    fail "steady-state inspection artifact still hardcodes TestServer"
+fi
 
 echo "PASS: required read-only inspection gates present"
 
@@ -109,6 +158,38 @@ expect_rejected "ids-01 absolute authority compose path" '.authority.compose_pat
 expect_rejected "ids-01 authority path traversal" '.authority.compose_path = "hosts/ids-01/../monitoring/docker-compose.yml"' "$IDS01_MANIFEST"
 expect_rejected "ids-01 wrong authority subtree" '.authority.compose_path = "stacks/monitoring/docker-compose.yml"' "$IDS01_MANIFEST"
 expect_rejected "ids-01 TestServer-only health endpoint" '.health.url = "http://192.168.2.220:9090/-/ready"' "$IDS01_MANIFEST"
+
+expect_rejected   "content check absolute relative path"   '.runtime.content_checks[0].relative_path = "/etc/passwd"'   "$CONTENT_MANIFEST"
+
+expect_rejected   "content check traversal"   '.runtime.content_checks[0].relative_path = "../secret"'   "$CONTENT_MANIFEST"
+
+expect_rejected   "content check undeclared mount source"   '.runtime.content_checks[0].mount_source = "/tmp"'   "$CONTENT_MANIFEST"
+
+expect_rejected   "content check file mount source"   '
+    .runtime.mounts += [
+      {
+        "type":"bind",
+        "source":"/home/james/docker/example.txt",
+        "destination":"/tmp/example.txt",
+        "rw":false,
+        "source_kind":"file",
+        "sha256":
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+    | .runtime.content_checks[0].mount_source =
+        "/home/james/docker/example.txt"
+  '   "$CONTENT_MANIFEST"
+
+expect_rejected   "content check nested mount boundary"   '
+    .runtime.content_checks[0].relative_path =
+      "data/wal/checkpoint"
+  '   "$CONTENT_MANIFEST"
+
+expect_rejected   "duplicate content check"   '.runtime.content_checks += [.runtime.content_checks[0]]'   "$CONTENT_MANIFEST"
+
+expect_rejected   "invalid content check SHA"   '.runtime.content_checks[0].sha256 = "abc"'   "$CONTENT_MANIFEST"
+
 expect_rejected "unpinned authority" '.authority.revision = "main"'
 expect_rejected "Compose outside live root" '.service.compose.project_directory = "/tmp/x" | .service.compose.compose_file = "/tmp/x/docker-compose.yml"'
 

@@ -225,6 +225,128 @@ verify_runtime() {
     fi
 }
 
+verify_content_checks() {
+    local mount_source relative expected_sha
+    local current part actual_sha other_source
+    local -a parts
+
+    CONTENT_CHECKS_JSON='[]'
+
+    while IFS=$'\t' read -r \
+        mount_source relative expected_sha
+    do
+        [ -n "$mount_source" ] || continue
+
+        jq -e \
+            --arg source "$mount_source" '
+              [
+                .runtime.mounts[]
+                | select(
+                    .source_kind == "directory"
+                    and .source == $source
+                  )
+              ]
+              | length == 1
+            ' "$MANIFEST" >/dev/null ||
+            fail "content check mount source is not an exact directory mount"
+
+        [ -d "$mount_source" ] ||
+            fail "content check mount source missing: $mount_source"
+
+        [ ! -L "$mount_source" ] ||
+            fail "content check mount source is a symlink: $mount_source"
+
+        case "$relative" in
+            ""|/*)
+                fail "content check relative path invalid"
+                ;;
+        esac
+
+        IFS='/' read -r -a parts <<<"$relative"
+
+        current="${mount_source%/}"
+
+        for part in "${parts[@]}"; do
+            [ -n "$part" ] ||
+                fail "content check path contains empty component"
+
+            [ "$part" != "." ] ||
+                fail "content check path contains dot component"
+
+            [ "$part" != ".." ] ||
+                fail "content check path traversal rejected"
+
+            current="${current}/${part}"
+
+            [ ! -L "$current" ] ||
+                fail "content check path contains symlink: $current"
+        done
+
+        [ -f "$current" ] ||
+            fail "content check file missing: $current"
+
+        while IFS= read -r other_source; do
+            [ -n "$other_source" ] || continue
+            [ "$other_source" != "$mount_source" ] || continue
+
+            other_source="${other_source%/}"
+
+            case "$other_source/" in
+                "${mount_source%/}/"*)
+                    case "$current" in
+                        "$other_source"/*)
+                            fail \
+                              "content check crosses a more-specific directory mount boundary"
+                            ;;
+                    esac
+                    ;;
+            esac
+        done < <(
+            jq -r '
+              .runtime.mounts[]
+              | select(.source_kind == "directory")
+              | .source
+            ' "$MANIFEST"
+        )
+
+        actual_sha="$(
+            sha256sum "$current" |
+            awk '{print $1}'
+        )"
+
+        [ "$actual_sha" = "$expected_sha" ] ||
+            fail "content check SHA-256 mismatch: $current"
+
+        CONTENT_CHECKS_JSON="$(
+            jq -c \
+                --arg mount_source "$mount_source" \
+                --arg relative_path "$relative" \
+                --arg path "$current" \
+                --arg sha256 "$actual_sha" '
+                  . + [
+                    {
+                      mount_source: $mount_source,
+                      relative_path: $relative_path,
+                      path: $path,
+                      sha256: $sha256,
+                      verified: true
+                    }
+                  ]
+                ' <<<"$CONTENT_CHECKS_JSON"
+        )"
+    done < <(
+        jq -r '
+          (.runtime.content_checks // [])[]
+          | [
+              .mount_source,
+              .relative_path,
+              .sha256
+            ]
+          | @tsv
+        ' "$MANIFEST"
+    )
+}
+
 verify_health() {
     local strategy expected url status code
     strategy="$(manifest_string '.health.strategy')"
@@ -312,6 +434,7 @@ verify_git_authority
 verify_compose_capability
 verify_desired_image
 verify_runtime
+verify_content_checks
 verify_health
 capture_protected
 
@@ -326,7 +449,7 @@ PORTS="$(jq -S -c '[((.[0].NetworkSettings.Ports // {}) | to_entries[]) as $entr
 jq -n \
   --arg artifact "service-steady-state-inspection" \
   --arg service "$SERVICE" \
-  --arg host "TestServer" \
+  --arg host "$MANIFEST_HOST" \
   --arg manifest "$MANIFEST" \
   --arg manifest_sha256 "$MANIFEST_SHA" \
   --arg authority_revision "$AUTHORITY_REVISION" \
@@ -340,6 +463,7 @@ jq -n \
   --argjson networks "$NETWORKS" \
   --argjson ports "$PORTS" \
   --argjson mounts "$MOUNTS" \
+  --argjson content_checks "$CONTENT_CHECKS_JSON" \
   --argjson health "$HEALTH_EVIDENCE" \
   --argjson protected "$PROTECTED_JSON" \
   '{
@@ -351,7 +475,7 @@ jq -n \
     manifest:{path:$manifest,sha256:$manifest_sha256},
     authority:{repository:"docker-env",revision:$authority_revision,compose_sha256:$compose_sha256,clean:true},
     desired:{version:$version,configured_image:$configured_image,immutable_ref:$immutable_ref,local_image_id:$local_image_id},
-    runtime:{container_id:$container_id,restart_count:$restart_count,running:true,networks:$networks,published_ports:$ports,mounts:$mounts},
+    runtime:{container_id:$container_id,restart_count:$restart_count,running:true,networks:$networks,published_ports:$ports,mounts:$mounts,content_checks:$content_checks},
     health:$health,
     protected_containers:$protected,
     mutation_allowed:false,

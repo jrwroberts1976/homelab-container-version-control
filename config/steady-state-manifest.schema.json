@@ -136,6 +136,32 @@
             }
           }
         },
+        "content_checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mount_source",
+              "relative_path",
+              "sha256"
+            ],
+            "properties": {
+              "mount_source": {
+                "type": "string",
+                "minLength": 1
+              },
+              "relative_path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        },
         "user": {"type": "string"},
         "privileged": {"type": "boolean"},
         "readonly_rootfs": {"type": "boolean"},
