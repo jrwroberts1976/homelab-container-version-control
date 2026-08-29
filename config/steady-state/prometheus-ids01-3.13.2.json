@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "artifact": "service-steady-state-manifest",
+  "mode": "stage6-steady-state",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "c70025add8aabf7f2806109244f079fd230ca634",
+    "compose_sha256": "b94ff12930efc512e08a26480bb2fa5de1a0bbeed97124aee9dd092a86cc67c1",
+    "compose_path": "hosts/ids-01/stacks/monitoring/docker-compose.yml"
+  },
+  "service": {
+    "name": "prometheus",
+    "host": "ids-01",
+    "container": "prometheus",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project_directory": "/home/james/docker/stacks/monitoring",
+      "project": "monitoring",
+      "compose_file": "/home/james/docker/stacks/monitoring/docker-compose.yml",
+      "service": "prometheus",
+      "image_variable": "PROMETHEUS_IMAGE"
+    }
+  },
+  "desired": {
+    "version": "3.13.2",
+    "image_repository": "prom/prometheus",
+    "configured_image": "prom/prometheus@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69",
+    "immutable_ref": "prom/prometheus@sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69",
+    "index_digest": "sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69",
+    "local_image_id": "sha256:508729e0e2d18e11fd742a5a5ca70e557b940a93948c3c95fd0123a6fd538b69",
+    "platform": {
+      "os": "linux",
+      "architecture": "amd64"
+    },
+    "metadata_verification": "digest-pinned",
+    "revision": "bb5dff00cf8fdfbf5c65e0531aa835fa238a43a2",
+    "created": "2026-07-30T12:01:58.514082203Z"
+  },
+  "runtime": {
+    "networks": [
+      "monitoring"
+    ],
+    "published_ports": [
+      {
+        "host_ip": "0.0.0.0",
+        "host_port": 9090,
+        "container_port": 9090,
+        "protocol": "tcp"
+      },
+      {
+        "host_ip": "::",
+        "host_port": 9090,
+        "container_port": 9090,
+        "protocol": "tcp"
+      }
+    ],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/monitoring/prometheus",
+        "destination": "/etc/prometheus",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/monitoring/prometheus/data",
+        "destination": "/prometheus",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      }
+    ],
+    "user": "1000:1000",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false,
+    "content_checks": [
+      {
+        "mount_source": "/home/james/docker/data/monitoring/prometheus",
+        "relative_path": "prometheus.yml",
+        "sha256": "18e03aa25f257382e7e1a895d378a895795d1300a88ad7a44ad66562a06bf28e"
+      },
+      {
+        "mount_source": "/home/james/docker/data/monitoring/prometheus",
+        "relative_path": "linux-hosts.yml",
+        "sha256": "ece6f85e0c12274ae903e50af2cdd7d4178320f3f1be6e05c6f15c6513a782c3"
+      },
+      {
+        "mount_source": "/home/james/docker/data/monitoring/prometheus",
+        "relative_path": "rules/host-health.yml",
+        "sha256": "775fbb7750361053b1769948fa7d6c44c6e1bc0c620e69ff0e1c752146594ab2"
+      }
+    ]
+  },
+  "health": {
+    "strategy": "http",
+    "expected": "200",
+    "url": "http://127.0.0.1:9090/-/ready",
+    "timeout_seconds": 360
+  },
+  "protection": {
+    "containers": [
+      "grafana",
+      "loki"
+    ]
+  }
+}
