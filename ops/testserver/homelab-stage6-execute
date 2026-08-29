@@ -58,7 +58,20 @@ load_manifest() {
 
     [ "$(manifest_string '.service.name')" = "$SERVICE" ] || fail "manifest service mismatch"
     [ "$(manifest_string '.service.container')" = "$SERVICE" ] || fail "manifest container mismatch"
-    [ "$(manifest_string '.service.host')" = "TestServer" ] || fail "manifest host mismatch"
+    MANIFEST_HOST="$(manifest_string '.service.host')"
+    CURRENT_HOST="$(hostname -s)"
+
+    case "$MANIFEST_HOST" in
+        TestServer|ids-01)
+            ;;
+        *)
+            fail "manifest host is not a reviewed Stage 6 Docker host"
+            ;;
+    esac
+
+    [ "$CURRENT_HOST" = "$MANIFEST_HOST" ] ||
+        fail "manifest host does not match local machine"
+
     [ "$(manifest_string '.service.image_type')" = "registry-image" ] || fail "unsupported image type"
 
     TARGET_CONTAINER="$(manifest_string '.service.container')"
@@ -79,6 +92,17 @@ load_manifest() {
     CANDIDATE_REF="$(manifest_string '.versions.candidate.immutable_ref')"
     CANDIDATE_INDEX_DIGEST="$(manifest_string '.versions.candidate.index_digest')"
     CANDIDATE_CONFIG_DIGEST="$(manifest_string '.versions.candidate.config_digest')"
+    CANDIDATE_LOCAL_ID="$(
+        jq -er '
+          (
+            .versions.candidate.local_image_id
+            //
+            .versions.candidate.config_digest
+          )
+          | strings
+          | select(length > 0)
+        ' "$MANIFEST"
+    )" || fail "candidate local image ID unavailable"
     CANDIDATE_OS="$(manifest_string '.versions.candidate.platform.os')"
     CANDIDATE_ARCH="$(manifest_string '.versions.candidate.platform.architecture')"
 
@@ -108,7 +132,7 @@ require_armed() {
 }
 
 verify_git_authority() {
-    local expected_commit expected_sha actual_commit status relative resolved authority_compose
+    local expected_commit expected_sha actual_commit status relative resolved authority_compose authority_path
 
     expected_commit="$(manifest_string '.authority.revision')"
     expected_sha="$(manifest_string '.authority.compose_sha256')"
@@ -117,13 +141,28 @@ verify_git_authority() {
     status="$(git -C "$AUTHORITY_ROOT" status --porcelain 2>/dev/null)" || fail "authority Git status unavailable"
     [ -z "$status" ] || fail "authority checkout is not clean"
 
-    [[ "$COMPOSE_FILE" = "$LIVE_ROOT/"* ]] || fail "live Compose path outside fixed runtime root"
-    relative="${COMPOSE_FILE#${LIVE_ROOT}/}"
-    [[ "/$relative/" != *"/../"* ]] || fail "authority path traversal blocked"
+    authority_path="$(jq -r '.authority.compose_path // ""' "$MANIFEST")"
+
+    if [ -n "$authority_path" ]; then
+        relative="$authority_path"
+        [[ "$relative" != /* ]] ||
+            fail "reviewed authority Compose path must be relative"
+        [[ "/$relative/" != *"/../"* ]] ||
+            fail "reviewed authority path traversal blocked"
+    else
+        [[ "$COMPOSE_FILE" = "$LIVE_ROOT/"* ]] ||
+            fail "live Compose path outside fixed runtime root"
+        relative="${COMPOSE_FILE#${LIVE_ROOT}/}"
+        [[ "$relative" != /* ]] ||
+            fail "derived authority Compose path must be relative"
+        [[ "/$relative/" != *"/../"* ]] ||
+            fail "authority path traversal blocked"
+    fi
     authority_compose="${AUTHORITY_ROOT}/${relative}"
     resolved="$(readlink -f "$authority_compose")"
     [[ "$resolved" = "$AUTHORITY_ROOT/"* ]] || fail "authority Compose escapes checkout"
 
+    require_secure_root_file "$authority_compose"
     verify_hash "$authority_compose" "$expected_sha"
     verify_hash "$COMPOSE_FILE" "$expected_sha"
 }
@@ -139,7 +178,7 @@ verify_local_images() {
     [ "$(jq -r '.[0].Architecture' <<<"$rollback_json")" = "$ROLLBACK_ARCH" ] || fail "rollback architecture mismatch"
     jq -e --arg ref "$ROLLBACK_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$rollback_json" >/dev/null || fail "rollback RepoDigest mismatch"
 
-    [ "$(jq -r '.[0].Id' <<<"$candidate_json")" = "$CANDIDATE_CONFIG_DIGEST" ] || fail "candidate local image ID mismatch"
+    [ "$(jq -r '.[0].Id' <<<"$candidate_json")" = "$CANDIDATE_LOCAL_ID" ] || fail "candidate local image ID mismatch"
     [ "$(jq -r '.[0].Os' <<<"$candidate_json")" = "$CANDIDATE_OS" ] || fail "candidate OS mismatch"
     [ "$(jq -r '.[0].Architecture' <<<"$candidate_json")" = "$CANDIDATE_ARCH" ] || fail "candidate architecture mismatch"
     jq -e --arg ref "$CANDIDATE_REF" '.[0].RepoDigests // [] | index($ref) != null' <<<"$candidate_json" >/dev/null || fail "candidate RepoDigest mismatch"
@@ -438,7 +477,7 @@ deploy() {
 
     mark_consumed
     compose_recreate "$CANDIDATE_REF"
-    verify_runtime_shape "$CANDIDATE_CONFIG_DIGEST" "$CANDIDATE_REF"
+    verify_runtime_shape "$CANDIDATE_LOCAL_ID" "$CANDIDATE_REF"
     wait_for_health
 
     after="$(build_container_state)"
@@ -455,9 +494,9 @@ rollback() {
 
     current_image="$(docker inspect "$TARGET_CONTAINER" --format '{{.Image}}' 2>/dev/null)" || fail "candidate container unavailable for rollback"
     current_config="$(docker inspect "$TARGET_CONTAINER" --format '{{.Config.Image}}' 2>/dev/null)" || fail "candidate configured image unavailable for rollback"
-    [ "$current_image" = "$CANDIDATE_CONFIG_DIGEST" ] || fail "rollback requires exact candidate image current"
+    [ "$current_image" = "$CANDIDATE_LOCAL_ID" ] || fail "rollback requires exact candidate image current"
     [ "$current_config" = "$CANDIDATE_REF" ] || fail "rollback requires exact candidate configured image"
-    verify_runtime_shape "$CANDIDATE_CONFIG_DIGEST" "$CANDIDATE_REF"
+    verify_runtime_shape "$CANDIDATE_LOCAL_ID" "$CANDIDATE_REF"
 
     before="$(build_container_state)"
     before_id="$(docker inspect "$TARGET_CONTAINER" --format '{{.Id}}')"
