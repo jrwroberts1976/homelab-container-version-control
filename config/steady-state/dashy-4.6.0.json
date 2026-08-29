@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "artifact": "service-steady-state-manifest",
+  "mode": "stage6-steady-state",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "788b302c67fc21618d471ab7951ebf379d2a5593",
+    "compose_sha256": "9a1295c5c7848c578a9b339411b02b2320cb7bd4b78764fce1d6b661fe97287f"
+  },
+  "service": {
+    "name": "dashy",
+    "host": "TestServer",
+    "container": "dashy",
+    "image_type": "registry-image",
+    "risk_class": "low",
+    "compose": {
+      "project_directory": "/home/james/docker/stacks/dashboards",
+      "project": "dashboards",
+      "compose_file": "/home/james/docker/stacks/dashboards/docker-compose.yml",
+      "service": "dashy",
+      "image_variable": "DASHY_IMAGE"
+    }
+  },
+  "desired": {
+    "version": "4.6.0",
+    "image_repository": "lissy93/dashy",
+    "configured_image": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59",
+    "immutable_ref": "lissy93/dashy@sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59",
+    "index_digest": "sha256:40e3b27369002d4bce12cdffd5136b05924e1a7ea4e0d971a890557045fb1d59",
+    "local_image_id": "sha256:f7c93e5961154c8ee4a4bce7f4448d30b9ee46def5ed8eb3ebef3d111370de99",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    },
+    "metadata_verification": "oci-labels",
+    "revision": "d707730b454a35c52187e824879386e1eb30f869",
+    "created": "2026-08-21T12:23:34.756341791Z"
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/dashboards/dashy/conf.yml",
+        "destination": "/app/user-data/conf.yml",
+        "rw": true,
+        "source_kind": "file",
+        "sha256": "03d8e2c988c949ae298b2ea76867759d359b5272a14e4b1f1bef33f2e71a96aa"
+      }
+    ],
+    "user": "node",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false
+  },
+  "health": {
+    "strategy": "docker-health",
+    "expected": "healthy",
+    "url": null,
+    "timeout_seconds": 360
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ]
+  }
+}
