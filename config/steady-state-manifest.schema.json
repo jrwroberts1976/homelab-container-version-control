@@ -175,9 +175,16 @@
       "additionalProperties": false,
       "required": ["strategy", "expected"],
       "properties": {
-        "strategy": {"enum": ["docker-health", "http"]},
+        "strategy": {"enum": ["docker-health", "http", "container-http"]},
         "expected": {"type": "string", "minLength": 1},
         "url": {"type": ["string", "null"]},
+        "network": {"type": ["string", "null"]},
+        "container_port": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "path": {"type": ["string", "null"]},
         "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 900}
       }
     },

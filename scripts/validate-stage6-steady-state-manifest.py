@@ -264,8 +264,15 @@ def validate_manifest(manifest: dict) -> None:
 
     health = manifest.get("health") or {}
     strategy = health.get("strategy")
-    require(strategy in {"docker-health", "http"}, "health strategy unsupported")
-    require(isinstance(health.get("expected"), str) and health["expected"], "health expected value missing")
+    require(
+        strategy in {"docker-health", "http", "container-http"},
+        "health strategy unsupported",
+    )
+    require(
+        isinstance(health.get("expected"), str) and health["expected"],
+        "health expected value missing",
+    )
+
     if strategy == "http":
         url = str(health.get("url") or "")
         local_http = (
@@ -274,13 +281,60 @@ def validate_manifest(manifest: dict) -> None:
         )
 
         if host == "TestServer":
-            allowed_http = local_http or url.startswith("http://192.168.2.220:")
+            allowed_http = (
+                local_http
+                or url.startswith("http://192.168.2.220:")
+            )
         else:
             allowed_http = local_http
 
         require(
             allowed_http,
             "HTTP health URL must be an approved local endpoint",
+        )
+
+        require(
+            health.get("network") is None
+            and health.get("container_port") is None
+            and health.get("path") is None,
+            "fixed HTTP health must not define container endpoint fields",
+        )
+
+    elif strategy == "container-http":
+        network = health.get("network")
+        port = health.get("container_port")
+        path = health.get("path")
+
+        require(
+            health.get("url") is None,
+            "container HTTP health must not define a fixed URL",
+        )
+
+        require(
+            isinstance(network, str) and bool(network),
+            "container HTTP health network missing",
+        )
+
+        require(
+            network in runtime["networks"],
+            "container HTTP health network is not a reviewed runtime network",
+        )
+
+        require(
+            isinstance(port, int)
+            and not isinstance(port, bool)
+            and 1 <= port <= 65535,
+            "container HTTP health port invalid",
+        )
+
+        require(
+            isinstance(path, str)
+            and path.startswith("/")
+            and "\r" not in path
+            and "\n" not in path
+            and " " not in path
+            and "\t" not in path,
+            "container HTTP health path invalid",
         )
 
     protection = manifest.get("protection") or {}
