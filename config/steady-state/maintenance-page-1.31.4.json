@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "artifact": "service-steady-state-manifest",
+  "mode": "stage6-steady-state",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "d1ca9a5e10d151893573fd97d6a5c282ba912a1e",
+    "compose_sha256": "26fb63ff74360932f0dbf9eb27876c67bb3212767aaa6a11ea6c3370750eeadf"
+  },
+  "service": {
+    "name": "maintenance-page",
+    "host": "TestServer",
+    "container": "maintenance-page",
+    "image_type": "registry-image",
+    "risk_class": "low",
+    "compose": {
+      "project_directory": "/home/james/docker/stacks/maintenance-page",
+      "project": "maintenance-page",
+      "compose_file": "/home/james/docker/stacks/maintenance-page/docker-compose.yml",
+      "service": "maintenance-page",
+      "image_variable": "MAINTENANCE_PAGE_IMAGE"
+    }
+  },
+  "desired": {
+    "version": "1.31.4",
+    "image_repository": "nginx",
+    "configured_image": "nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913",
+    "immutable_ref": "nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913",
+    "index_digest": "sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913",
+    "local_image_id": "sha256:c961b530972080b857d1f447363cc411023cf31727e06e14aba0f76cebee6aa5",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    },
+    "metadata_verification": "digest-pinned"
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [
+      {
+        "host_ip": "192.168.2.220",
+        "host_port": 8088,
+        "container_port": 80,
+        "protocol": "tcp"
+      }
+    ],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/stacks/maintenance-page/html",
+        "destination": "/usr/share/nginx/html",
+        "rw": false,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/stacks/maintenance-page/nginx/default.conf",
+        "destination": "/etc/nginx/conf.d/default.conf",
+        "rw": false,
+        "source_kind": "file",
+        "sha256": "5f776d04e520489a0958d2f267dcf034448a3c385b88f142ae7aa67d53a34d13"
+      }
+    ],
+    "content_checks": [
+      {
+        "mount_source": "/home/james/docker/stacks/maintenance-page/html",
+        "relative_path": "index.html",
+        "sha256": "9497b740f24af80568843efdf500544a25b47f4dd3fe248161c31c4cd202eb29"
+      },
+      {
+        "mount_source": "/home/james/docker/stacks/maintenance-page/html",
+        "relative_path": "change.json",
+        "sha256": "59b8e6034f7c3e76893a86b126ed862182e4aa38aa9aca36c0c884ab790d0ec8"
+      }
+    ],
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": false
+  },
+  "health": {
+    "strategy": "http",
+    "expected": "200",
+    "url": "http://192.168.2.220:8088/",
+    "timeout_seconds": 60
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ]
+  }
+}

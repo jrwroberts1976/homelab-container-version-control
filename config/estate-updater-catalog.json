@@ -295,14 +295,15 @@
       }
     },
     "maintenance-page": {
-      "desired_version": null,
+      "desired_version": "1.31.4",
       "hosts": {
         "TestServer": {
-          "current_version": null,
+          "current_version": "1.31.4",
           "configured_image": "nginx@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913",
-          "coverage": "pending-onboarding",
+          "coverage": "managed-tested",
           "class": "standard-registry",
-          "inspect_ready": false
+          "inspect_ready": true,
+          "steady_state_manifest": "maintenance-page.json"
         }
       }
     },
