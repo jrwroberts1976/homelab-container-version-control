@@ -151,6 +151,107 @@ def validate_manifest(manifest: dict) -> None:
         if source == DOCKER_SOCKET and destination == DOCKER_SOCKET:
             socket_mounts.append(mount)
 
+    content_checks = runtime.get("content_checks", [])
+    require(
+        isinstance(content_checks, list),
+        "runtime content_checks must be an array",
+    )
+
+    directory_mount_sources = {
+        str(mount.get("source", ""))
+        for mount in runtime["mounts"]
+        if mount.get("source_kind") == "directory"
+    }
+
+    seen_content_checks = set()
+
+    for check in content_checks:
+        require(
+            isinstance(check, dict),
+            "content check must be an object",
+        )
+
+        mount_source = str(check.get("mount_source", ""))
+        relative = str(check.get("relative_path", ""))
+        sha256 = str(check.get("sha256", ""))
+
+        require(
+            mount_source in directory_mount_sources,
+            "content check mount_source must be an exact declared "
+            "directory mount source",
+        )
+
+        mount_path = Path(mount_source)
+
+        require(
+            mount_path.is_absolute(),
+            "content check mount_source must be absolute",
+        )
+
+        require(
+            relative,
+            "content check relative_path missing",
+        )
+
+        relative_path = Path(relative)
+
+        require(
+            not relative_path.is_absolute(),
+            "content check relative_path must be relative",
+        )
+
+        require(
+            ".." not in relative_path.parts,
+            "content check path traversal rejected",
+        )
+
+        require(
+            "." not in relative_path.parts,
+            "content check relative_path must be normalized",
+        )
+
+        require(
+            relative_path.as_posix() == relative,
+            "content check relative_path must be normalized",
+        )
+
+        require(
+            bool(SHA_RE.fullmatch(sha256)),
+            "content check SHA-256 invalid",
+        )
+
+        identity = (mount_source, relative)
+
+        require(
+            identity not in seen_content_checks,
+            "duplicate content check",
+        )
+
+        seen_content_checks.add(identity)
+
+        content_path = mount_path / relative_path
+
+        for other_source in directory_mount_sources:
+            if other_source == mount_source:
+                continue
+
+            other_path = Path(other_source)
+
+            try:
+                other_path.relative_to(mount_path)
+            except ValueError:
+                continue
+
+            try:
+                content_path.relative_to(other_path)
+            except ValueError:
+                continue
+
+            fail(
+                "content check crosses a more-specific "
+                "directory mount boundary"
+            )
+
     if runtime["docker_socket_allowed"]:
         require(service.get("risk_class") == "medium", "Docker socket requires medium risk class")
         require(len(socket_mentions) == 1 and len(socket_mounts) == 1, "exactly one Docker socket mount required")
