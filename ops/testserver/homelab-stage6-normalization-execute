@@ -1,0 +1,1442 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+MANIFEST_DIR="/etc/homelab-stage6/image-normalization"
+VALIDATOR="/usr/local/libexec/homelab-stage6-validate-image-normalization"
+INSPECTOR="/usr/local/libexec/homelab-stage6-normalization-inspect"
+INSTALLED_SELF="/usr/local/libexec/homelab-stage6-normalization-execute"
+
+AUTHORITY_ROOT="/var/lib/homelab-stage6/authority/docker-env"
+LIVE_ROOT="/home/james/docker"
+STATE_ROOT="/var/lib/homelab-stage6/image-normalization-state"
+
+fail() {
+    printf 'FAIL: %s\n' "$1" >&2
+    exit 2
+}
+
+require_secure_root_file() {
+    local file="$1"
+
+    [ -f "$file" ] ||
+        fail "required root-owned file missing: $file"
+
+    [ ! -L "$file" ] ||
+        fail "root-owned file must not be a symlink: $file"
+
+    [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+        fail "file is not root:root: $file"
+
+    if find "$file" \
+        -maxdepth 0 \
+        -perm /022 \
+        -print -quit |
+       grep -q .
+    then
+        fail "file is group/other writable: $file"
+    fi
+}
+
+require_secure_root_dir() {
+    local dir="$1"
+
+    [ -d "$dir" ] ||
+        fail "required root-owned directory missing: $dir"
+
+    [ ! -L "$dir" ] ||
+        fail "root-owned directory must not be a symlink: $dir"
+
+    [ "$(stat -c '%U:%G' "$dir")" = "root:root" ] ||
+        fail "directory is not root:root: $dir"
+
+    if find "$dir" \
+        -maxdepth 0 \
+        -perm /022 \
+        -print -quit |
+       grep -q .
+    then
+        fail "directory is group/other writable: $dir"
+    fi
+}
+
+manifest_string() {
+    local query="$1"
+
+    jq -er \
+        "$query | strings | select(length > 0)" \
+        "$MANIFEST" 2>/dev/null ||
+        fail "manifest value unavailable: $query"
+}
+
+verify_hash() {
+    local file="$1"
+    local expected="$2"
+    local actual
+
+    [ -f "$file" ] ||
+        fail "required file missing: $file"
+
+    [ ! -L "$file" ] ||
+        fail "required file must not be a symlink: $file"
+
+    actual="$(
+        sha256sum "$file" |
+        awk '{print $1}'
+    )"
+
+    [ "$actual" = "$expected" ] ||
+        fail "SHA-256 mismatch: $file"
+}
+
+load_manifest() {
+    MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"
+
+    require_secure_root_file "$MANIFEST"
+
+    "$VALIDATOR" "$MANIFEST" >/dev/null ||
+        fail "normalization manifest validation failed"
+
+    [ "$(manifest_string '.service.name')" = "$SERVICE" ] ||
+        fail "manifest service mismatch"
+
+    MANIFEST_HOST="$(
+        manifest_string '.service.host'
+    )"
+
+    CURRENT_HOST="$(
+        hostname -s
+    )"
+
+    case "$MANIFEST_HOST" in
+        TestServer|ids-01)
+            ;;
+        *)
+            fail "manifest host is not a reviewed Docker host"
+            ;;
+    esac
+
+    [ "$CURRENT_HOST" = "$MANIFEST_HOST" ] ||
+        fail "manifest host does not match local machine"
+
+    jq -e '
+      .execution.human_approval_required == true
+      and
+        .execution.post_approval_reinspection_required ==
+        true
+      and .execution.one_shot_required == true
+      and .execution.target_must_be_local_before_arm == true
+      and .execution.deployment_pull_allowed == false
+      and .execution.rollback_required == true
+      and
+        .execution.rollback_ref_type ==
+        "tagged-source-configuration"
+      and
+        .execution.normalization_kind ==
+        "tag-to-immutable-same-content"
+    ' "$MANIFEST" >/dev/null ||
+        fail "normalization execution safety contract invalid"
+
+    TARGET_CONTAINER="$(
+        manifest_string '.service.container'
+    )"
+
+    PROJECT_DIR="$(
+        manifest_string '.service.compose.project_directory'
+    )"
+
+    COMPOSE_PROJECT="$(
+        manifest_string '.service.compose.project'
+    )"
+
+    COMPOSE_FILE="$(
+        manifest_string '.service.compose.compose_file'
+    )"
+
+    COMPOSE_SERVICE="$(
+        manifest_string '.service.compose.service'
+    )"
+
+    IMAGE_VARIABLE="$(
+        manifest_string '.service.compose.image_variable'
+    )"
+
+    MANIFEST_SHA="$(
+        sha256sum "$MANIFEST" |
+        awk '{print $1}'
+    )"
+
+    AUTHORITY_REVISION="$(
+        manifest_string '.authority.revision'
+    )"
+
+    COMPOSE_SHA="$(
+        manifest_string '.authority.compose_sha256'
+    )"
+
+    SOURCE_REF="$(
+        manifest_string '.image.source.configured_image'
+    )"
+
+    SOURCE_LOCAL_ID="$(
+        manifest_string '.image.source.local_image_id'
+    )"
+
+    TARGET_REF="$(
+        manifest_string '.image.target.configured_image'
+    )"
+
+    TARGET_DIGEST="$(
+        manifest_string '.image.target.index_digest'
+    )"
+
+    TARGET_LOCAL_ID="$(
+        manifest_string '.image.target.local_image_id'
+    )"
+
+    ROLLBACK_REF="$(
+        manifest_string '.image.rollback.configured_image'
+    )"
+
+    ROLLBACK_LOCAL_ID="$(
+        manifest_string '.image.rollback.local_image_id'
+    )"
+
+    IMAGE_OS="$(
+        manifest_string '.image.platform.os'
+    )"
+
+    IMAGE_ARCH="$(
+        manifest_string '.image.platform.architecture'
+    )"
+
+    [ "$SOURCE_LOCAL_ID" = "$TARGET_LOCAL_ID" ] ||
+        fail "source and target image content differs"
+
+    [ "$SOURCE_LOCAL_ID" = "$ROLLBACK_LOCAL_ID" ] ||
+        fail "rollback image content differs"
+
+    [ "$ROLLBACK_REF" = "$SOURCE_REF" ] ||
+        fail "rollback is not exact tagged source configuration"
+
+    NORMALIZATION_ID="stage6-normalize-${SERVICE}-${TARGET_DIGEST#sha256:}"
+
+    SERVICE_STATE_DIR="${STATE_ROOT}/${SERVICE}"
+    APPROVAL_FILE="${SERVICE_STATE_DIR}/approval.json"
+    CONSUMED_FILE="${SERVICE_STATE_DIR}/${NORMALIZATION_ID}.consumed"
+}
+
+require_installed_context() {
+    [ "$(id -u)" -eq 0 ] ||
+        fail "normalization executor requires root"
+
+    [ "$(readlink -f "$0")" = "$INSTALLED_SELF" ] ||
+        fail "normalization executor is not running from reviewed installed path"
+
+    require_secure_root_file "$INSTALLED_SELF"
+    require_secure_root_file "$VALIDATOR"
+    require_secure_root_file "$INSPECTOR"
+
+    require_secure_root_dir "/var/lib/homelab-stage6"
+    require_secure_root_dir "$AUTHORITY_ROOT"
+}
+
+verify_approval() {
+    local stored_baseline_sha
+    local recomputed_baseline_sha
+
+    require_secure_root_dir "$STATE_ROOT"
+    require_secure_root_dir "$SERVICE_STATE_DIR"
+    require_secure_root_file "$APPROVAL_FILE"
+
+    jq -e \
+        --arg normalization_id "$NORMALIZATION_ID" \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg manifest_sha "$MANIFEST_SHA" \
+        --arg authority "$AUTHORITY_REVISION" \
+        --arg compose_sha "$COMPOSE_SHA" \
+        --arg source_ref "$SOURCE_REF" \
+        --arg target_ref "$TARGET_REF" \
+        --arg rollback_ref "$ROLLBACK_REF" '
+          .schema_version == 1
+          and
+            .artifact ==
+            "stage6-image-normalization-approval"
+
+          and .normalization_id == $normalization_id
+          and .service == $service
+          and .host == $host
+
+          and .manifest_sha256 == $manifest_sha
+
+          and .authority.revision == $authority
+          and .authority.compose_sha256 == $compose_sha
+
+          and .image.source_ref == $source_ref
+          and .image.target_ref == $target_ref
+          and .image.rollback_ref == $rollback_ref
+
+          and .approval.required == true
+          and .approval.granted == true
+
+          and
+            .post_approval_reinspection_required ==
+            true
+
+          and .one_shot_required == true
+          and .deployment_pull_allowed == false
+
+          and .container_mutation_performed == false
+          and .normalization_performed == false
+
+          and
+            (
+              .zero_drift_baseline_sha256
+              | test("^[0-9a-f]{64}$")
+            )
+        ' "$APPROVAL_FILE" >/dev/null ||
+        fail "normalization approval state invalid"
+
+    stored_baseline_sha="$(
+        jq -er \
+            '.zero_drift_baseline_sha256' \
+            "$APPROVAL_FILE"
+    )" ||
+        fail "approved zero-drift baseline hash unavailable"
+
+    recomputed_baseline_sha="$(
+        jq -S -c \
+            '.zero_drift_baseline' \
+            "$APPROVAL_FILE" |
+        tr -d '\n' |
+        sha256sum |
+        awk '{print $1}'
+    )"
+
+    [ "$recomputed_baseline_sha" = "$stored_baseline_sha" ] ||
+        fail "approval zero-drift baseline hash mismatch"
+
+    APPROVED_BASELINE_SHA="$stored_baseline_sha"
+}
+
+verify_git_authority() {
+    local actual_commit
+    local status
+    local authority_path
+    local relative
+    local authority_compose
+    local resolved
+
+    actual_commit="$(
+        git -C "$AUTHORITY_ROOT" \
+            rev-parse HEAD 2>/dev/null
+    )" ||
+        fail "authority Git commit unavailable"
+
+    [ "$actual_commit" = "$AUTHORITY_REVISION" ] ||
+        fail "authority Git commit mismatch"
+
+    status="$(
+        git -C "$AUTHORITY_ROOT" \
+            status --porcelain 2>/dev/null
+    )" ||
+        fail "authority Git status unavailable"
+
+    [ -z "$status" ] ||
+        fail "authority checkout is not clean"
+
+    authority_path="$(
+        jq -r \
+            '.authority.compose_path // ""' \
+            "$MANIFEST"
+    )"
+
+    if [ -n "$authority_path" ]; then
+        relative="$authority_path"
+
+        [[ "$relative" != /* ]] ||
+            fail "reviewed authority Compose path must be relative"
+
+        [[ "/$relative/" != *"/../"* ]] ||
+            fail "reviewed authority path traversal blocked"
+    else
+        [[ "$COMPOSE_FILE" = "$LIVE_ROOT/"* ]] ||
+            fail "live Compose path outside fixed runtime root"
+
+        relative="${COMPOSE_FILE#${LIVE_ROOT}/}"
+
+        [[ "$relative" != /* ]] ||
+            fail "derived authority Compose path must be relative"
+
+        [[ "/$relative/" != *"/../"* ]] ||
+            fail "authority path traversal blocked"
+    fi
+
+    authority_compose="${AUTHORITY_ROOT}/${relative}"
+
+    resolved="$(
+        readlink -f "$authority_compose"
+    )"
+
+    [[ "$resolved" = "$AUTHORITY_ROOT/"* ]] ||
+        fail "authority Compose path escapes checkout"
+
+    require_secure_root_file "$authority_compose"
+
+    verify_hash \
+        "$authority_compose" \
+        "$COMPOSE_SHA"
+
+    verify_hash \
+        "$COMPOSE_FILE" \
+        "$COMPOSE_SHA"
+}
+
+render_image() {
+    local ref="$1"
+
+    env "$IMAGE_VARIABLE=$ref" \
+        docker compose \
+            --project-directory "$PROJECT_DIR" \
+            -p "$COMPOSE_PROJECT" \
+            -f "$COMPOSE_FILE" \
+            config |
+    awk -v service="$COMPOSE_SERVICE" '
+        $0 == "  " service ":" {
+            active=1
+            next
+        }
+
+        active && /^    image:/ {
+            sub(/^    image: /, "")
+            gsub(/^"|"$/, "")
+            print
+            exit
+        }
+    '
+}
+
+verify_compose_images() {
+    local source_rendered
+    local target_rendered
+
+    source_rendered="$(
+        render_image "$SOURCE_REF"
+    )"
+
+    target_rendered="$(
+        render_image "$TARGET_REF"
+    )"
+
+    [ "$source_rendered" = "$SOURCE_REF" ] ||
+        fail "Compose rollback source render mismatch"
+
+    [ "$target_rendered" = "$TARGET_REF" ] ||
+        fail "Compose immutable target render mismatch"
+}
+
+verify_local_images() {
+    local source_json
+    local target_json
+
+    source_json="$(
+        docker image inspect \
+            "$SOURCE_REF" 2>/dev/null
+    )" ||
+        fail "tagged source image is not local"
+
+    target_json="$(
+        docker image inspect \
+            "$TARGET_REF" 2>/dev/null
+    )" ||
+        fail "immutable target image is not local"
+
+    [ "$(jq -r '.[0].Id' <<<"$source_json")" = "$SOURCE_LOCAL_ID" ] ||
+        fail "source local image ID mismatch"
+
+    [ "$(jq -r '.[0].Id' <<<"$target_json")" = "$TARGET_LOCAL_ID" ] ||
+        fail "target local image ID mismatch"
+
+    [ "$SOURCE_LOCAL_ID" = "$TARGET_LOCAL_ID" ] ||
+        fail "normalization target is different image content"
+
+    [ "$(jq -r '.[0].Os' <<<"$source_json")" = "$IMAGE_OS" ] ||
+        fail "source image OS mismatch"
+
+    [ "$(jq -r '.[0].Architecture' <<<"$source_json")" = "$IMAGE_ARCH" ] ||
+        fail "source image architecture mismatch"
+
+    [ "$(jq -r '.[0].Os' <<<"$target_json")" = "$IMAGE_OS" ] ||
+        fail "target image OS mismatch"
+
+    [ "$(jq -r '.[0].Architecture' <<<"$target_json")" = "$IMAGE_ARCH" ] ||
+        fail "target image architecture mismatch"
+
+    jq -e \
+        --arg ref "$TARGET_REF" '
+          .[0].RepoDigests // []
+          | index($ref) != null
+        ' <<<"$source_json" >/dev/null ||
+        fail "source RepoDigests lacks immutable target"
+
+    jq -e \
+        --arg ref "$TARGET_REF" '
+          .[0].RepoDigests // []
+          | index($ref) != null
+        ' <<<"$target_json" >/dev/null ||
+        fail "target RepoDigests lacks immutable target"
+}
+
+build_zero_drift_baseline() {
+    local artifact="$1"
+
+    jq -S -c '
+      {
+        manifest_sha256:
+          .manifest.sha256,
+
+        authority:{
+          revision:
+            .authority.revision,
+          compose_sha256:
+            .authority.compose_sha256
+        },
+
+        image:{
+          source_ref:
+            .image.source.configured_image,
+          source_local_image_id:
+            .image.source.local_image_id,
+
+          target_ref:
+            .image.target.configured_image,
+          target_local_image_id:
+            .image.target.local_image_id,
+
+          rollback_ref:
+            .image.rollback.configured_image,
+          rollback_local_image_id:
+            .image.rollback.local_image_id
+        },
+
+        runtime:{
+          container_id:
+            .runtime.container_id,
+          configured_image:
+            .runtime.configured_image,
+          image_id:
+            .runtime.image_id,
+          restart_count:
+            .runtime.restart_count,
+          networks:
+            .runtime.networks,
+          published_ports:
+            .runtime.published_ports,
+          mounts:
+            .runtime.mounts
+        },
+
+        health:{
+          strategy:
+            .health.strategy,
+          resolved_url:
+            .health.resolved_url,
+          status:
+            .health.status,
+          marker:
+            .health.marker,
+          verified:
+            .health.verified
+        },
+
+        protected_containers:
+          (
+            [
+              .protected_containers[]
+              | {
+                  name,
+                  container_id,
+                  restart_count,
+                  running
+                }
+            ]
+            | sort_by(.name)
+          )
+      }
+    ' "$artifact"
+}
+
+run_postapproval_reinspection() {
+    local artifact
+    local current_baseline
+    local current_baseline_sha
+
+    artifact="$(
+        mktemp \
+            /tmp/stage6-normalization-reinspection.XXXXXX
+    )"
+
+    if ! "$INSPECTOR" "$SERVICE" > "$artifact"; then
+        rm -f -- "$artifact"
+        fail "post-approval normalization inspection failed"
+    fi
+
+    jq -e \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg manifest_sha "$MANIFEST_SHA" \
+        --arg source_ref "$SOURCE_REF" \
+        --arg source_id "$SOURCE_LOCAL_ID" \
+        --arg target_ref "$TARGET_REF" \
+        --arg target_id "$TARGET_LOCAL_ID" '
+          .schema_version == 1
+          and
+            .artifact ==
+            "service-image-normalization-inspection"
+          and .mode == "read-only"
+          and .service == $service
+          and .host == $host
+
+          and .manifest.sha256 == $manifest_sha
+
+          and .authority.clean == true
+
+          and .compose.source_resolved_image == $source_ref
+          and .compose.target_resolved_image == $target_ref
+          and .compose.verified == true
+
+          and .image.source.configured_image == $source_ref
+          and .image.source.local_image_id == $source_id
+          and .image.target.configured_image == $target_ref
+          and .image.target.local_image_id == $target_id
+          and .image.same_content == true
+          and .image.target_local == true
+
+          and .runtime.configured_image == $source_ref
+          and .runtime.image_id == $source_id
+          and .runtime.running == true
+
+          and .health.verified == true
+
+          and
+            (
+              [.protected_containers[].running]
+              | all
+            )
+
+          and .mutation_allowed == false
+          and .normalization.allowed == false
+          and .normalization.performed == false
+
+          and .approval.required == true
+          and .approval.present == false
+
+          and
+            .result ==
+            "normalization-preflight-verified"
+        ' "$artifact" >/dev/null || {
+            rm -f -- "$artifact"
+            fail "post-approval inspection artifact failed safety gate"
+        }
+
+    current_baseline="$(
+        build_zero_drift_baseline "$artifact"
+    )"
+
+    current_baseline_sha="$(
+        printf '%s' "$current_baseline" |
+        sha256sum |
+        awk '{print $1}'
+    )"
+
+    rm -f -- "$artifact"
+
+    [ "$current_baseline_sha" = "$APPROVED_BASELINE_SHA" ] ||
+        fail "post-approval zero-drift baseline mismatch"
+
+    ZERO_DRIFT_REINSPECTION_SHA="$current_baseline_sha"
+}
+
+verify_runtime_shape() {
+    local expected_image_id="$1"
+    local expected_configured_image="$2"
+
+    local container_json
+    local expected_networks
+    local actual_networks
+    local expected_ports
+    local actual_ports
+    local expected_mounts
+    local actual_mounts
+    local expected_user
+    local expected_privileged
+    local expected_readonly
+    local expected_restart
+    local source
+    local source_kind
+    local expected_sha
+    local actual_sha
+
+    container_json="$(
+        docker inspect \
+            "$TARGET_CONTAINER" 2>/dev/null
+    )" ||
+        fail "target container unavailable"
+
+    [ "$(jq -r '.[0].State.Running' <<<"$container_json")" = "true" ] ||
+        fail "target container is not running"
+
+    [ "$(jq -r '.[0].Image' <<<"$container_json")" = "$expected_image_id" ] ||
+        fail "target image ID mismatch"
+
+    [ "$(jq -r '.[0].Config.Image' <<<"$container_json")" = "$expected_configured_image" ] ||
+        fail "target configured image mismatch"
+
+    expected_networks="$(
+        jq -c \
+            '.runtime.networks | sort' \
+            "$MANIFEST"
+    )"
+
+    actual_networks="$(
+        jq -c \
+            '.[0].NetworkSettings.Networks | keys | sort' \
+            <<<"$container_json"
+    )"
+
+    [ "$actual_networks" = "$expected_networks" ] ||
+        fail "target network membership mismatch"
+
+    expected_ports="$(
+        jq -S -c '
+          .runtime.published_ports
+          | sort_by(
+              .container_port,
+              .protocol,
+              .host_ip,
+              .host_port
+            )
+        ' "$MANIFEST"
+    )"
+
+    actual_ports="$(
+        jq -S -c '
+          [
+            (
+              (.[0].NetworkSettings.Ports // {})
+              | to_entries[]
+            ) as $entry
+
+            | select($entry.value != null)
+
+            | (
+                $entry.key
+                | capture(
+                    "^(?<port>[0-9]+)/(?<protocol>tcp|udp)$"
+                  )
+              ) as $cp
+
+            | $entry.value[]
+
+            | {
+                host_ip:.HostIp,
+                host_port:(.HostPort | tonumber),
+                container_port:($cp.port | tonumber),
+                protocol:$cp.protocol
+              }
+          ]
+          | sort_by(
+              .container_port,
+              .protocol,
+              .host_ip,
+              .host_port
+            )
+        ' <<<"$container_json"
+    )"
+
+    [ "$actual_ports" = "$expected_ports" ] ||
+        fail "target published-port shape mismatch"
+
+    expected_mounts="$(
+        jq -S -c '
+          [
+            .runtime.mounts[]
+            | {
+                type,
+                source,
+                destination,
+                rw
+              }
+          ]
+          | sort_by(
+              .destination,
+              .source
+            )
+        ' "$MANIFEST"
+    )"
+
+    actual_mounts="$(
+        jq -S -c '
+          [
+            .[0].Mounts[]
+            | {
+                type:.Type,
+                source:.Source,
+                destination:.Destination,
+                rw:.RW
+              }
+          ]
+          | sort_by(
+              .destination,
+              .source
+            )
+        ' <<<"$container_json"
+    )"
+
+    [ "$actual_mounts" = "$expected_mounts" ] ||
+        fail "target mount shape mismatch"
+
+    while IFS=$'\t' read -r \
+        source \
+        source_kind \
+        expected_sha
+    do
+        [ -n "$source" ] ||
+            continue
+
+        [ ! -L "$source" ] ||
+            fail "bind-mount source must not be symlink: $source"
+
+        case "$source_kind" in
+            file)
+                [ -f "$source" ] ||
+                    fail "bind-mount file missing: $source"
+
+                actual_sha="$(
+                    sha256sum "$source" |
+                    awk '{print $1}'
+                )"
+
+                [ "$actual_sha" = "$expected_sha" ] ||
+                    fail "bind-mount content hash mismatch: $source"
+                ;;
+
+            directory)
+                [ -d "$source" ] ||
+                    fail "bind-mount directory missing: $source"
+
+                [ -z "$expected_sha" ] ||
+                    fail "directory mount must not carry SHA-256"
+                ;;
+
+            *)
+                fail "unsupported bind-mount source kind"
+                ;;
+        esac
+
+    done < <(
+        jq -r '
+          .runtime.mounts[]
+          | [
+              .source,
+              .source_kind,
+              (.sha256 // "")
+            ]
+          | @tsv
+        ' "$MANIFEST"
+    )
+
+    expected_user="$(
+        jq -r \
+            '.runtime.user' \
+            "$MANIFEST"
+    )"
+
+    expected_privileged="$(
+        jq -r \
+            '.runtime.privileged' \
+            "$MANIFEST"
+    )"
+
+    expected_readonly="$(
+        jq -r \
+            '.runtime.readonly_rootfs' \
+            "$MANIFEST"
+    )"
+
+    expected_restart="$(
+        jq -r \
+            '.runtime.restart_policy' \
+            "$MANIFEST"
+    )"
+
+    [ "$(jq -r '.[0].Config.User // ""' <<<"$container_json")" = "$expected_user" ] ||
+        fail "target user mismatch"
+
+    [ "$(jq -r '.[0].HostConfig.Privileged' <<<"$container_json")" = "$expected_privileged" ] ||
+        fail "target privileged state mismatch"
+
+    [ "$(jq -r '.[0].HostConfig.ReadonlyRootfs' <<<"$container_json")" = "$expected_readonly" ] ||
+        fail "target read-only-rootfs state mismatch"
+
+    [ "$(jq -r '.[0].HostConfig.RestartPolicy.Name' <<<"$container_json")" = "$expected_restart" ] ||
+        fail "target restart policy mismatch"
+
+    [ "$(jq -r '.[0].HostConfig.Devices | length' <<<"$container_json")" = "0" ] ||
+        fail "target unexpectedly has device mappings"
+
+    jq -e '
+      [
+        .[0].Mounts[]
+        | select(
+            (.Source | contains("docker.sock"))
+            or
+            (.Destination | contains("docker.sock"))
+          )
+      ]
+      | length == 0
+    ' <<<"$container_json" >/dev/null ||
+        fail "target unexpectedly has Docker socket mount"
+}
+
+build_container_state() {
+    docker ps -aq |
+    sort |
+    xargs -r docker inspect |
+    jq -S -c '
+      [
+        .[]
+        | {
+            name:(.Name | ltrimstr("/")),
+            container_id:.Id,
+            restart_count:.RestartCount,
+            running:.State.Running
+          }
+      ]
+      | sort_by(.name)
+    '
+}
+
+verify_unrelated_unchanged() {
+    local before="$1"
+    local after="$2"
+    local before_other
+    local after_other
+
+    before_other="$(
+        jq -S -c \
+            --arg target "$TARGET_CONTAINER" '
+              [
+                .[]
+                | select(.name != $target)
+              ]
+            ' <<<"$before"
+    )"
+
+    after_other="$(
+        jq -S -c \
+            --arg target "$TARGET_CONTAINER" '
+              [
+                .[]
+                | select(.name != $target)
+              ]
+            ' <<<"$after"
+    )"
+
+    [ "$before_other" = "$after_other" ] ||
+        fail "unrelated container state changed"
+}
+
+verify_approved_runtime_identity() {
+    local current_id
+    local current_restart
+    local approved_id
+    local approved_restart
+    local name
+    local approved_container_id
+    local approved_restart_count
+    local current_json
+
+    approved_id="$(
+        jq -er \
+            '.zero_drift_baseline.runtime.container_id' \
+            "$APPROVAL_FILE"
+    )"
+
+    approved_restart="$(
+        jq -er \
+            '.zero_drift_baseline.runtime.restart_count' \
+            "$APPROVAL_FILE"
+    )"
+
+    current_id="$(
+        docker inspect \
+            "$TARGET_CONTAINER" \
+            --format '{{.Id}}'
+    )"
+
+    current_restart="$(
+        docker inspect \
+            "$TARGET_CONTAINER" \
+            --format '{{.RestartCount}}'
+    )"
+
+    [ "$current_id" = "$approved_id" ] ||
+        fail "target container changed after zero-drift inspection"
+
+    [ "$current_restart" = "$approved_restart" ] ||
+        fail "target restart count changed after zero-drift inspection"
+
+    while IFS=$'\t' read -r \
+        name \
+        approved_container_id \
+        approved_restart_count
+    do
+        current_json="$(
+            docker inspect \
+                "$name" 2>/dev/null
+        )" ||
+            fail "approved protected container unavailable: $name"
+
+        [ "$(jq -r '.[0].Id' <<<"$current_json")" = "$approved_container_id" ] ||
+            fail "protected container ID changed after approval: $name"
+
+        [ "$(jq -r '.[0].RestartCount' <<<"$current_json")" = "$approved_restart_count" ] ||
+            fail "protected restart count changed after approval: $name"
+
+        [ "$(jq -r '.[0].State.Running' <<<"$current_json")" = "true" ] ||
+            fail "protected container not running after approval: $name"
+
+    done < <(
+        jq -r '
+          .zero_drift_baseline
+          .protected_containers[]
+          | [
+              .name,
+              .container_id,
+              .restart_count
+            ]
+          | @tsv
+        ' "$APPROVAL_FILE"
+    )
+}
+
+mark_consumed() {
+    local tmp
+
+    [ ! -e "$CONSUMED_FILE" ] ||
+        fail "normalization ID is already consumed"
+
+    tmp="$(
+        mktemp \
+            "${SERVICE_STATE_DIR}/${NORMALIZATION_ID}.consumed.tmp.XXXXXX"
+    )"
+
+    printf '%s\n' \
+        "$NORMALIZATION_ID" \
+        > "$tmp"
+
+    chown root:root "$tmp"
+    chmod 0600 "$tmp"
+
+    mv -f \
+        "$tmp" \
+        "$CONSUMED_FILE"
+
+    require_secure_root_file "$CONSUMED_FILE"
+
+    [ "$(
+        tr -d '\r\n' \
+            < "$CONSUMED_FILE"
+    )" = "$NORMALIZATION_ID" ] ||
+        fail "consumed normalization identity mismatch"
+}
+
+require_consumed() {
+    require_secure_root_file "$CONSUMED_FILE"
+
+    [ "$(
+        tr -d '\r\n' \
+            < "$CONSUMED_FILE"
+    )" = "$NORMALIZATION_ID" ] ||
+        fail "consumed normalization identity mismatch"
+}
+
+compose_recreate() {
+    local image="$1"
+    local rc
+
+    set +e
+
+    env "$IMAGE_VARIABLE=$image" \
+        docker compose \
+            --project-directory "$PROJECT_DIR" \
+            -p "$COMPOSE_PROJECT" \
+            -f "$COMPOSE_FILE" \
+            up -d \
+            --no-deps \
+            --no-build \
+            --pull never \
+            --force-recreate \
+            "$COMPOSE_SERVICE"
+
+    rc=$?
+
+    set -e
+
+    [ "$rc" -eq 0 ] ||
+        fail "Compose recreate failed; normalization remains consumed"
+}
+
+wait_for_health() {
+    local strategy
+    local timeout
+    local elapsed
+    local expected
+    local marker
+    local url
+    local network
+    local port
+    local path
+    local container_ip
+    local tmp
+    local code
+
+    strategy="$(
+        manifest_string '.health.strategy'
+    )"
+
+    timeout="$(
+        jq -er '
+          .health.timeout_seconds
+          | numbers
+          | select(. >= 1 and . <= 900)
+        ' "$MANIFEST"
+    )" ||
+        fail "health timeout unavailable"
+
+    expected="$(
+        jq -er '
+          .health.expected_status
+          | numbers
+          | select(. >= 100 and . <= 599)
+        ' "$MANIFEST"
+    )" ||
+        fail "health expected status unavailable"
+
+    marker="$(
+        jq -r \
+            '.health.marker // ""' \
+            "$MANIFEST"
+    )"
+
+    elapsed=0
+
+    while [ "$elapsed" -lt "$timeout" ]; do
+        case "$strategy" in
+            http)
+                url="$(
+                    manifest_string '.health.url'
+                )"
+                ;;
+
+            container-http)
+                network="$(
+                    manifest_string '.health.network'
+                )"
+
+                port="$(
+                    jq -er \
+                        '.health.container_port' \
+                        "$MANIFEST"
+                )" ||
+                    fail "container-http port unavailable"
+
+                path="$(
+                    manifest_string '.health.path'
+                )"
+
+                jq -e \
+                    --arg network "$network" '
+                      .runtime.networks
+                      | index($network) != null
+                    ' "$MANIFEST" >/dev/null ||
+                    fail "container-http network is not reviewed"
+
+                container_ip="$(
+                    docker inspect \
+                        "$TARGET_CONTAINER" |
+                    jq -r \
+                        --arg network "$network" '
+                          .[0]
+                          .NetworkSettings
+                          .Networks[$network]
+                          .IPAddress // ""
+                        '
+                )"
+
+                [ -n "$container_ip" ] ||
+                    fail "container-http address unavailable"
+
+                url="http://${container_ip}:${port}${path}"
+                ;;
+
+            *)
+                fail "unsupported health strategy"
+                ;;
+        esac
+
+        tmp="$(
+            mktemp \
+                /tmp/stage6-normalization-health.XXXXXX
+        )"
+
+        code="$(
+            curl \
+                --silent \
+                --show-error \
+                --max-time 5 \
+                --output "$tmp" \
+                --write-out '%{http_code}' \
+                "$url" 2>/dev/null ||
+            true
+        )"
+
+        if [ "$code" = "$expected" ]; then
+            if [ -z "$marker" ] ||
+               grep -Fq "$marker" "$tmp"
+            then
+                rm -f -- "$tmp"
+                HEALTH_RESULT="http-${code}"
+                HEALTH_URL="$url"
+                return 0
+            fi
+        fi
+
+        rm -f -- "$tmp"
+
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    fail "target did not satisfy health contract before timeout"
+}
+
+emit_result() {
+    local action="$1"
+    local result="$2"
+    local before_id="$3"
+    local after_id="$4"
+
+    jq -n \
+        --arg action "$action" \
+        --arg result "$result" \
+        --arg normalization_id "$NORMALIZATION_ID" \
+        --arg service "$SERVICE" \
+        --arg host "$MANIFEST_HOST" \
+        --arg source_ref "$SOURCE_REF" \
+        --arg target_ref "$TARGET_REF" \
+        --arg rollback_ref "$ROLLBACK_REF" \
+        --arg before_id "$before_id" \
+        --arg after_id "$after_id" \
+        --arg health_result "$HEALTH_RESULT" \
+        --arg health_url "$HEALTH_URL" \
+        --arg baseline_sha "$APPROVED_BASELINE_SHA" '
+          {
+            schema_version:1,
+            artifact:
+              "stage6-image-normalization-execution-result",
+
+            action:$action,
+
+            result:$result,
+
+            normalization_id:
+              $normalization_id,
+
+            service:$service,
+            host:$host,
+
+            source_ref:$source_ref,
+            target_ref:$target_ref,
+            rollback_ref:$rollback_ref,
+
+            zero_drift_baseline_sha256:
+              $baseline_sha,
+
+            target:{
+              container_id_before:$before_id,
+              container_id_after:$after_id
+            },
+
+            health:{
+              result:$health_result,
+              resolved_url:$health_url
+            },
+
+            image_pulled:false,
+            container_mutation_performed:true,
+            unrelated_containers_unchanged:true,
+            consumed:true,
+            approval_remains_present:true
+          }
+        '
+}
+
+normalize() {
+    local before
+    local after
+    local before_id
+    local after_id
+
+    [ ! -e "$CONSUMED_FILE" ] ||
+        fail "normalization ID is already consumed"
+
+    verify_git_authority
+    verify_compose_images
+    verify_local_images
+
+    run_postapproval_reinspection
+
+    verify_runtime_shape \
+        "$SOURCE_LOCAL_ID" \
+        "$SOURCE_REF"
+
+    verify_approved_runtime_identity
+
+    before="$(
+        build_container_state
+    )"
+
+    before_id="$(
+        docker inspect \
+            "$TARGET_CONTAINER" \
+            --format '{{.Id}}'
+    )"
+
+    mark_consumed
+
+    compose_recreate \
+        "$TARGET_REF"
+
+    verify_runtime_shape \
+        "$TARGET_LOCAL_ID" \
+        "$TARGET_REF"
+
+    wait_for_health
+
+    after="$(
+        build_container_state
+    )"
+
+    verify_unrelated_unchanged \
+        "$before" \
+        "$after"
+
+    after_id="$(
+        docker inspect \
+            "$TARGET_CONTAINER" \
+            --format '{{.Id}}'
+    )"
+
+    [ "$after_id" != "$before_id" ] ||
+        fail "normalization did not recreate target container"
+
+    emit_result \
+        normalize \
+        normalized \
+        "$before_id" \
+        "$after_id"
+}
+
+rollback() {
+    local before
+    local after
+    local before_id
+    local after_id
+
+    require_consumed
+
+    verify_git_authority
+    verify_compose_images
+    verify_local_images
+
+    verify_runtime_shape \
+        "$TARGET_LOCAL_ID" \
+        "$TARGET_REF"
+
+    before="$(
+        build_container_state
+    )"
+
+    before_id="$(
+        docker inspect \
+            "$TARGET_CONTAINER" \
+            --format '{{.Id}}'
+    )"
+
+    compose_recreate \
+        "$ROLLBACK_REF"
+
+    verify_runtime_shape \
+        "$ROLLBACK_LOCAL_ID" \
+        "$ROLLBACK_REF"
+
+    wait_for_health
+
+    after="$(
+        build_container_state
+    )"
+
+    verify_unrelated_unchanged \
+        "$before" \
+        "$after"
+
+    after_id="$(
+        docker inspect \
+            "$TARGET_CONTAINER" \
+            --format '{{.Id}}'
+    )"
+
+    [ "$after_id" != "$before_id" ] ||
+        fail "rollback did not recreate target container"
+
+    emit_result \
+        rollback \
+        rolled-back \
+        "$before_id" \
+        "$after_id"
+}
+
+[ "$(id -u)" -eq 0 ] ||
+    fail "normalization executor requires root"
+
+[ "$#" -eq 2 ] ||
+    fail "usage: homelab-stage6-normalization-execute ACTION SERVICE"
+
+ACTION="$1"
+SERVICE="$2"
+
+[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
+    fail "invalid service name"
+
+require_installed_context
+load_manifest
+verify_approval
+
+case "$ACTION" in
+    normalize)
+        normalize
+        ;;
+
+    rollback)
+        rollback
+        ;;
+
+    *)
+        fail "action not permitted"
+        ;;
+esac
