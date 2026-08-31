@@ -33,6 +33,7 @@
     ],
     "containers": [
       "grafana",
+      "loki",
       "prometheus"
     ]
   },
