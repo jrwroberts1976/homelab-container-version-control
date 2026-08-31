@@ -21,7 +21,7 @@ pipeline {
     STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
     STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
     STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
-    STAGE6_FRAMEWORK_BASE_COMMIT = '0884f49e415c02356f4f8bde586ea5f285ee7772'
+    STAGE6_FRAMEWORK_BASE_COMMIT = 'e15d91c606ad782af4051d9a9ad52c79905c0344'
   }
 
   stages {
@@ -64,9 +64,35 @@ pipeline {
             error('Manifest service name is not safe')
           }
 
+          def manifestHost = m.service?.host?.toString()
+
+          def hostRoutes = [
+            'TestServer': [
+              address: '172.30.255.249',
+              knownHosts: '/var/jenkins_home/.ssh/stage4-testserver-known_hosts',
+              hostKeyFingerprint: 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk',
+              inspectorCredential: 'homelab-stage6-testserver-inspector',
+              executorCredential: 'homelab-stage6-testserver-executor',
+              executorFingerprint: 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
+            ],
+            'ids-01': [
+              address: '192.168.2.242',
+              knownHosts: '/var/jenkins_home/.ssh/stage6-ids01-known_hosts',
+              hostKeyFingerprint: 'SHA256:kzg4d7EDJoRJ7upaDxo3h23pbxJDMjwf+gOGeNTst8Y',
+              inspectorCredential: 'homelab-stage6-ids01-inspector',
+              executorCredential: 'homelab-stage6-ids01-executor',
+              executorFingerprint: 'SHA256:p7eXjRzsk7fM7zI71cio7bB60XdHEXNIkgXGgyrEpX0'
+            ]
+          ]
+
+          def route = hostRoutes[manifestHost]
+
+          if (route == null) {
+            error('Manifest host is outside the reviewed Stage 6 routing table')
+          }
+
           if (m.service?.container?.toString() != service ||
               m.service?.compose?.service?.toString() != service ||
-              m.service?.host?.toString() != 'TestServer' ||
               m.service?.image_type?.toString() != 'registry-image') {
             error('Manifest service identity is outside the Stage 6 generic contract')
           }
@@ -90,6 +116,13 @@ pipeline {
           }
 
           env.STAGE6_SERVICE = service
+          env.STAGE6_MANIFEST_HOST = manifestHost
+          env.STAGE6_HOST = route.address
+          env.STAGE6_KNOWN_HOSTS = route.knownHosts
+          env.STAGE6_HOSTKEY_FINGERPRINT = route.hostKeyFingerprint
+          env.STAGE6_INSPECTOR_CREDENTIAL = route.inspectorCredential
+          env.STAGE6_EXECUTOR_CREDENTIAL = route.executorCredential
+          env.STAGE6_EXECUTOR_FINGERPRINT = route.executorFingerprint
           env.STAGE6_UPDATE_ID = "stage6-${service}-${candidateDigest.substring(7)}"
           env.STAGE6_AUTHORITY_COMMIT = m.authority?.revision?.toString()
           env.STAGE6_COMPOSE_SHA256 = m.authority?.compose_sha256?.toString()
@@ -102,7 +135,7 @@ pipeline {
 
           env.STAGE6_CANDIDATE_VERSION = candidate?.version?.toString()
           env.STAGE6_CANDIDATE_REF = candidate?.immutable_ref?.toString()
-          env.STAGE6_CANDIDATE_IMAGE_ID = candidate?.config_digest?.toString()
+          env.STAGE6_CANDIDATE_IMAGE_ID = (candidate?.local_image_id ?: candidate?.config_digest)?.toString()
           env.STAGE6_CANDIDATE_PLATFORM_MANIFEST = candidate?.platform_manifest_digest?.toString()
           env.STAGE6_CANDIDATE_REVISION = candidate?.revision?.toString()
           env.STAGE6_CANDIDATE_METADATA_VERIFICATION = (candidate?.metadata_verification ?: 'oci-labels').toString()
@@ -138,6 +171,12 @@ pipeline {
           test -f ops/testserver/homelab-stage6-transition
           test -f ops/testserver/homelab-stage6-execute
           test -f ops/testserver/homelab-stage6-executor-ssh
+          test -f ops/ids01/homelab-stage6-inspector-ssh
+          test -f ops/ids01/homelab-stage6-executor-ssh
+          test -f ops/ids01/homelab-stage6-inspector-sudoers
+          test -f ops/ids01/homelab-stage6-executor-sudoers
+          test -f ops/ids01/homelab-stage6-inspector-authorized-key.template
+          test -f ops/ids01/homelab-stage6-executor-authorized-key.template
           test -f scripts/stage6-normalize-executor-key.sh
           test -f scripts/validate-stage6-service-manifest.py
           test -f config/service-update-manifest.schema.json
@@ -159,6 +198,12 @@ pipeline {
             ops/testserver/homelab-stage6-executor-ssh \
             ops/testserver/homelab-stage6-inspector-sudoers \
             ops/testserver/homelab-stage6-executor-sudoers \
+            ops/ids01/homelab-stage6-inspector-ssh \
+            ops/ids01/homelab-stage6-executor-ssh \
+            ops/ids01/homelab-stage6-inspector-sudoers \
+            ops/ids01/homelab-stage6-executor-sudoers \
+            ops/ids01/homelab-stage6-inspector-authorized-key.template \
+            ops/ids01/homelab-stage6-executor-authorized-key.template \
             config/service-update-manifest.schema.json \
             scripts/validate-stage6-service-manifest.py
 
@@ -173,7 +218,7 @@ pipeline {
           rm -f "${STAGE6_ARTIFACT_PREFIX}"-*.json \
                 "${STAGE6_ARTIFACT_PREFIX}"-*.txt
 
-          echo "PASS: generic Stage 6 source dependencies and TestServer host key pinned"
+          echo "PASS: generic Stage 6 source dependencies and $STAGE6_MANIFEST_HOST host key pinned"
         '''
       }
     }
@@ -182,7 +227,7 @@ pipeline {
       steps {
         withCredentials([
           sshUserPrivateKey(
-            credentialsId: 'homelab-stage6-testserver-inspector',
+            credentialsId: env.STAGE6_INSPECTOR_CREDENTIAL,
             keyFileVariable: 'STAGE6_INSPECT_KEY',
             usernameVariable: 'STAGE6_INSPECT_USER'
           )
@@ -224,7 +269,7 @@ pipeline {
               a.artifact != 'service-update-inspection' ||
               a.mode != 'stage6-preapproval-inspect' ||
               a.service != env.STAGE6_SERVICE ||
-              a.host != 'TestServer' ||
+              a.host != env.STAGE6_MANIFEST_HOST ||
               a.result != 'ready-for-human-review') {
             error('Unexpected Stage 6 pre-approval inspection identity')
           }
@@ -346,7 +391,7 @@ pipeline {
       steps {
         withCredentials([
           sshUserPrivateKey(
-            credentialsId: 'homelab-stage6-testserver-inspector',
+            credentialsId: env.STAGE6_INSPECTOR_CREDENTIAL,
             keyFileVariable: 'STAGE6_REINSPECT_KEY',
             usernameVariable: 'STAGE6_REINSPECT_USER'
           )
@@ -390,7 +435,7 @@ pipeline {
               a.artifact != 'service-update-inspection' ||
               a.mode != 'stage6-preapproval-inspect' ||
               a.service != env.STAGE6_SERVICE ||
-              a.host != 'TestServer' ||
+              a.host != env.STAGE6_MANIFEST_HOST ||
               a.result != 'ready-for-human-review') {
             error('Post-approval inspection identity changed')
           }
@@ -442,7 +487,7 @@ pipeline {
       steps {
         withCredentials([
           sshUserPrivateKey(
-            credentialsId: 'homelab-stage6-testserver-executor',
+            credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL,
             keyFileVariable: 'STAGE6_EXECUTOR_PING_KEY',
             usernameVariable: 'STAGE6_EXECUTOR_PING_USER'
           )
@@ -488,7 +533,7 @@ pipeline {
       steps {
         withCredentials([
           sshUserPrivateKey(
-            credentialsId: 'homelab-stage6-testserver-executor',
+            credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL,
             keyFileVariable: 'STAGE6_ARM_KEY',
             usernameVariable: 'STAGE6_ARM_USER'
           )
@@ -557,7 +602,7 @@ pipeline {
 
           withCredentials([
             sshUserPrivateKey(
-              credentialsId: 'homelab-stage6-testserver-executor',
+              credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL,
               keyFileVariable: 'STAGE6_DEPLOY_KEY',
               usernameVariable: 'STAGE6_DEPLOY_USER'
             )
@@ -659,7 +704,7 @@ pipeline {
 
           withCredentials([
             sshUserPrivateKey(
-              credentialsId: 'homelab-stage6-testserver-executor',
+              credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL,
               keyFileVariable: 'STAGE6_ROLLBACK_KEY',
               usernameVariable: 'STAGE6_ROLLBACK_USER'
             )
@@ -748,7 +793,7 @@ pipeline {
       steps {
         withCredentials([
           sshUserPrivateKey(
-            credentialsId: 'homelab-stage6-testserver-executor',
+            credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL,
             keyFileVariable: 'STAGE6_DISARM_KEY',
             usernameVariable: 'STAGE6_DISARM_USER'
           )
