@@ -330,6 +330,7 @@ verify_runtime_shape() {
 
 wait_for_health() {
     local strategy timeout elapsed expected status url marker tmp code
+    local network port path container_ip
 
     strategy="$(manifest_string '.health.strategy')"
     timeout="$(jq -r '.health.timeout_seconds' "$MANIFEST")"
@@ -357,6 +358,41 @@ wait_for_health() {
                     return 0
                 fi
                 rm -f "$tmp"
+                ;;
+
+            container-http)
+                network="$(manifest_string '.health.network')"
+                port="$(jq -er '.health.container_port | numbers | select(. >= 1 and . <= 65535)' "$MANIFEST")" ||
+                    fail "container HTTP health port unavailable"
+                path="$(manifest_string '.health.path')"
+                expected="$(jq -r '.health.expected_status' "$MANIFEST")"
+                marker="$(jq -r '.health.marker // ""' "$MANIFEST")"
+
+                jq -e                     --arg network "$network"                     '.runtime.networks | index($network) != null'                     "$MANIFEST" >/dev/null ||
+                    fail "container HTTP network is not reviewed"
+
+                container_ip="$(
+                    docker inspect "$TARGET_CONTAINER" 2>/dev/null |
+                    jq -r                         --arg network "$network"                         '.[0].NetworkSettings.Networks[$network].IPAddress // ""'                         2>/dev/null || true
+                )"
+
+                if [ -n "$container_ip" ]; then
+                    url="http://${container_ip}:${port}${path}"
+                    tmp="$(mktemp)"
+
+                    code="$(
+                        curl -sS                             --max-time 10                             -o "$tmp"                             -w '%{http_code}'                             "$url"                             2>/dev/null || true
+                    )"
+
+                    if [ "$code" = "$expected" ] &&
+                       { [ -z "$marker" ] || grep -Fq "$marker" "$tmp"; }; then
+                        rm -f "$tmp"
+                        HEALTH_RESULT="http-${code}"
+                        return 0
+                    fi
+
+                    rm -f "$tmp"
+                fi
                 ;;
             *)
                 fail "unsupported health strategy"

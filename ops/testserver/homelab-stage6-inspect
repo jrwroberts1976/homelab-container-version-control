@@ -428,6 +428,7 @@ verify_runtime_shape() {
 
 verify_health() {
     local strategy expected status url marker tmp code
+    local network port path container_ip
 
     strategy="$(manifest_string '.health.strategy')"
 
@@ -455,6 +456,48 @@ verify_health() {
                     fail "HTTP health marker missing"
                 }
             fi
+            rm -f "$tmp"
+            HEALTH_RESULT="http-${code}"
+            ;;
+
+        container-http)
+            network="$(manifest_string '.health.network')"
+            port="$(jq -er '.health.container_port | numbers | select(. >= 1 and . <= 65535)' "$MANIFEST")" ||
+                fail "container HTTP health port unavailable"
+            path="$(manifest_string '.health.path')"
+            expected="$(jq -r '.health.expected_status' "$MANIFEST")"
+            marker="$(jq -r '.health.marker // ""' "$MANIFEST")"
+
+            jq -e                 --arg network "$network"                 '.runtime.networks | index($network) != null'                 "$MANIFEST" >/dev/null ||
+                fail "container HTTP network is not reviewed"
+
+            container_ip="$(
+                docker inspect "$TARGET_CONTAINER" |
+                jq -r                     --arg network "$network"                     '.[0].NetworkSettings.Networks[$network].IPAddress // ""'
+            )"
+
+            [ -n "$container_ip" ] ||
+                fail "container HTTP network address unavailable"
+
+            url="http://${container_ip}:${port}${path}"
+            tmp="$(mktemp)"
+
+            code="$(
+                curl -sS                     --max-time 10                     -o "$tmp"                     -w '%{http_code}'                     "$url"                     2>/dev/null || true
+            )"
+
+            [ "$code" = "$expected" ] || {
+                rm -f "$tmp"
+                fail "container HTTP health status mismatch"
+            }
+
+            if [ -n "$marker" ]; then
+                grep -Fq "$marker" "$tmp" || {
+                    rm -f "$tmp"
+                    fail "container HTTP health marker missing"
+                }
+            fi
+
             rm -f "$tmp"
             HEALTH_RESULT="http-${code}"
             ;;

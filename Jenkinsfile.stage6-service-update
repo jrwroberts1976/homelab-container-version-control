@@ -17,7 +17,7 @@ pipeline {
 
   environment {
     STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
-    STAGE6_FRAMEWORK_BASE_COMMIT = 'e15d91c606ad782af4051d9a9ad52c79905c0344'
+    STAGE6_FRAMEWORK_BASE_COMMIT = '8a1caec033c72e1be1ca9f46ebcd65e73fb99af6'
   }
 
   stages {
@@ -105,7 +105,8 @@ pipeline {
           def healthResult
           if (healthStrategy == 'docker-health') {
             healthResult = m.health?.expected?.toString()
-          } else if (healthStrategy == 'http') {
+          } else if (healthStrategy == 'http' ||
+                     healthStrategy == 'container-http') {
             healthResult = "http-${m.health?.expected_status}"
           } else {
             error('Manifest health strategy is unsupported')
