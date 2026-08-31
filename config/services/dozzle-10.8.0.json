@@ -46,7 +46,7 @@
       "config_digest": "sha256:eca1774c3ff18eb6ff177d0d557b2ff37da5df6f7c617450b4eca48327f20ce8",
       "created": "2026-08-31T01:53:02.409766398Z",
       "revision": "f9dc18a0aa1d4e1b561364a5d76a045609eb3536",
-      "metadata_verification": "oci-labels",
+      "metadata_verification": "digest-pinned",
       "platform": {
         "os": "linux",
         "architecture": "arm64"
