@@ -21,7 +21,7 @@ pipeline {
     STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
     STAGE6_EXECUTOR_FINGERPRINT = 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
     STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
-    STAGE6_FRAMEWORK_BASE_COMMIT = '0884f49e415c02356f4f8bde586ea5f285ee7772'
+    STAGE6_FRAMEWORK_BASE_COMMIT = 'e15d91c606ad782af4051d9a9ad52c79905c0344'
   }
 
   stages {
@@ -171,6 +171,12 @@ pipeline {
           test -f ops/testserver/homelab-stage6-transition
           test -f ops/testserver/homelab-stage6-execute
           test -f ops/testserver/homelab-stage6-executor-ssh
+          test -f ops/ids01/homelab-stage6-inspector-ssh
+          test -f ops/ids01/homelab-stage6-executor-ssh
+          test -f ops/ids01/homelab-stage6-inspector-sudoers
+          test -f ops/ids01/homelab-stage6-executor-sudoers
+          test -f ops/ids01/homelab-stage6-inspector-authorized-key.template
+          test -f ops/ids01/homelab-stage6-executor-authorized-key.template
           test -f scripts/stage6-normalize-executor-key.sh
           test -f scripts/validate-stage6-service-manifest.py
           test -f config/service-update-manifest.schema.json
@@ -192,6 +198,12 @@ pipeline {
             ops/testserver/homelab-stage6-executor-ssh \
             ops/testserver/homelab-stage6-inspector-sudoers \
             ops/testserver/homelab-stage6-executor-sudoers \
+            ops/ids01/homelab-stage6-inspector-ssh \
+            ops/ids01/homelab-stage6-executor-ssh \
+            ops/ids01/homelab-stage6-inspector-sudoers \
+            ops/ids01/homelab-stage6-executor-sudoers \
+            ops/ids01/homelab-stage6-inspector-authorized-key.template \
+            ops/ids01/homelab-stage6-executor-authorized-key.template \
             config/service-update-manifest.schema.json \
             scripts/validate-stage6-service-manifest.py
 
