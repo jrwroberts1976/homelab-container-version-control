@@ -1,0 +1,38 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+COMMAND="${SSH_ORIGINAL_COMMAND:-}"
+
+fail() {
+    printf 'FAIL: command not permitted\n' >&2
+    exit 2
+}
+
+require_service() {
+    local service="$1"
+    [[ "$service" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
+}
+
+case "$COMMAND" in
+    ping)
+        printf 'pong\n'
+        ;;
+    arm\ *|disarm\ *)
+        ACTION="${COMMAND%% *}"
+        SERVICE="${COMMAND#* }"
+        require_service "$SERVICE"
+        exec sudo -n /usr/local/libexec/homelab-stage6-transition "$ACTION" "$SERVICE"
+        ;;
+    deploy\ *|rollback\ *)
+        ACTION="${COMMAND%% *}"
+        SERVICE="${COMMAND#* }"
+        require_service "$SERVICE"
+        exec sudo -n /usr/local/libexec/homelab-stage6-execute "$ACTION" "$SERVICE"
+        ;;
+    *)
+        fail
+        ;;
+esac
