@@ -354,7 +354,9 @@ verify_runtime_shape() {
             "$MANIFEST"
     )
 
-    expected_user="$(manifest_string '.runtime.user')"
+    expected_user="$(
+        jq -er '.runtime.user | strings' "$MANIFEST" 2>/dev/null
+    )" || fail "manifest runtime user unavailable"
     expected_privileged="$(jq -r '.runtime.privileged' "$MANIFEST")"
     expected_readonly="$(jq -r '.runtime.readonly_rootfs' "$MANIFEST")"
     expected_restart="$(manifest_string '.runtime.restart_policy')"
