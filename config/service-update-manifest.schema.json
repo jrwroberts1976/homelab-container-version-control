@@ -215,6 +215,40 @@
             "marker": { "type": ["string", "null"] },
             "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 900 }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "strategy",
+            "network",
+            "container_port",
+            "path",
+            "expected_status",
+            "marker",
+            "timeout_seconds"
+          ],
+          "properties": {
+            "strategy": { "const": "container-http" },
+            "network": { "type": "string", "minLength": 1 },
+            "container_port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "path": { "type": "string", "pattern": "^/" },
+            "expected_status": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            "marker": { "type": ["string", "null"] },
+            "timeout_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 900
+            }
+          }
         }
       ]
     },

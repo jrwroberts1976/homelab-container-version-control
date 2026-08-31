@@ -105,7 +105,8 @@ pipeline {
           def healthResult
           if (healthStrategy == 'docker-health') {
             healthResult = m.health?.expected?.toString()
-          } else if (healthStrategy == 'http') {
+          } else if (healthStrategy == 'http' ||
+                     healthStrategy == 'container-http') {
             healthResult = "http-${m.health?.expected_status}"
           } else {
             error('Manifest health strategy is unsupported')

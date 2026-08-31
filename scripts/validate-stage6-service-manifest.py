@@ -357,12 +357,27 @@ def validate_manifest(manifest: dict) -> None:
     require(compose_exec.get("pull") == "never", "Compose --pull never required")
     require(compose_exec.get("force_recreate") is True, "Compose --force-recreate required")
 
-    require(health.get("strategy") in {"docker-health", "http"}, "unsupported health strategy")
-    require(isinstance(health.get("timeout_seconds"), int) and 1 <= health["timeout_seconds"] <= 900, "health timeout invalid")
-    if health.get("strategy") == "docker-health":
-        require(health.get("expected") == "healthy", "docker-health expected state must be healthy")
-    else:
+    health_strategy = health.get("strategy")
+
+    require(
+        health_strategy in {"docker-health", "http", "container-http"},
+        "unsupported health strategy",
+    )
+    require(
+        isinstance(health.get("timeout_seconds"), int)
+        and 1 <= health["timeout_seconds"] <= 900,
+        "health timeout invalid",
+    )
+
+    if health_strategy == "docker-health":
+        require(
+            health.get("expected") == "healthy",
+            "docker-health expected state must be healthy",
+        )
+
+    elif health_strategy == "http":
         health_url = str(health.get("url", ""))
+
         require(
             health_url.startswith(("http://", "https://")),
             "HTTP health URL invalid",
@@ -378,6 +393,38 @@ def validate_manifest(manifest: dict) -> None:
                 or health_url.startswith("http://localhost:"),
                 "ids-01 HTTP health URL must be local",
             )
+
+    else:
+        require(
+            host == "TestServer",
+            "container-http is currently reviewed for TestServer only",
+        )
+
+        health_network = health.get("network")
+        health_port = health.get("container_port")
+        health_path = health.get("path")
+
+        require(
+            isinstance(health_network, str)
+            and health_network
+            and health_network in networks,
+            "container-http network must be one reviewed runtime network",
+        )
+        require(
+            isinstance(health_port, int)
+            and 1 <= health_port <= 65535,
+            "container-http port invalid",
+        )
+        require(
+            isinstance(health_path, str)
+            and health_path.startswith("/"),
+            "container-http path invalid",
+        )
+        require(
+            isinstance(health.get("expected_status"), int)
+            and 100 <= health["expected_status"] <= 599,
+            "container-http expected_status invalid",
+        )
 
     protected = set(protection.get("containers") or [])
 
