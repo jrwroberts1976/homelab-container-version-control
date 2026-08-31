@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "artifact": "service-update-manifest",
+  "mode": "stage6-generic",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "0d8c9566a3e1a5cb75d1783f53786b1442d3e25e",
+    "compose_sha256": "ab0327d5150c9a123010b2c8fc90de24300a1dad9738be3db838bdb287e486ff",
+    "compose_path": "hosts/ids-01/stacks/monitoring/docker-compose.yml"
+  },
+  "execution": {
+    "candidate_acquisition": "separate-reviewed-step",
+    "candidate_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "human_approval_required": true,
+    "one_shot_required": true,
+    "post_approval_reinspection_required": true,
+    "rollback_only_for_consumed_pilot": true,
+    "rollback_required": true
+  },
+  "health": {
+    "expected_status": 200,
+    "marker": "ready",
+    "strategy": "http",
+    "timeout_seconds": 360,
+    "url": "http://127.0.0.1:3100/ready"
+  },
+  "protection": {
+    "all_other_containers_unchanged": true,
+    "compare": [
+      "container_id",
+      "restart_count"
+    ],
+    "containers": [
+      "grafana",
+      "prometheus"
+    ]
+  },
+  "runtime": {
+    "compose_execution": {
+      "force_recreate": true,
+      "no_build": true,
+      "no_deps": true,
+      "pull": "never"
+    },
+    "devices_allowed": false,
+    "docker_socket_allowed": false,
+    "mounts": [
+      {
+        "destination": "/etc/loki/local-config.yaml",
+        "rw": true,
+        "sha256": "74031f99cdb647c98052171a60660d35450c4fb0775a5003c0faac96de17ed57",
+        "source": "/home/james/docker/data/monitoring/loki/local-config.yaml",
+        "source_kind": "file",
+        "type": "bind"
+      },
+      {
+        "destination": "/loki",
+        "rw": true,
+        "sha256": null,
+        "source": "/home/james/docker/data/monitoring/loki/data",
+        "source_kind": "directory",
+        "type": "bind"
+      }
+    ],
+    "networks": [
+      "monitoring"
+    ],
+    "privileged": false,
+    "published_ports": [
+      {
+        "container_port": 3100,
+        "host_ip": "0.0.0.0",
+        "host_port": 3100,
+        "protocol": "tcp"
+      },
+      {
+        "container_port": 3100,
+        "host_ip": "::",
+        "host_port": 3100,
+        "protocol": "tcp"
+      }
+    ],
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "user": "10001"
+  },
+  "service": {
+    "compose": {
+      "compose_file": "/home/james/docker/stacks/monitoring/docker-compose.yml",
+      "image_variable": "LOKI_IMAGE",
+      "project": "monitoring",
+      "project_directory": "/home/james/docker/stacks/monitoring",
+      "service": "loki"
+    },
+    "container": "loki",
+    "host": "ids-01",
+    "image_type": "registry-image",
+    "name": "loki",
+    "risk_class": "medium"
+  },
+  "versions": {
+    "candidate": {
+      "config_digest": "sha256:a52a3f3d29ceb505474cb493a7d61f7d810ac666ecd98dff41c676299f5bf684",
+      "created": "2026-08-27T19:20:03.304993481Z",
+      "image_repository": "grafana/loki",
+      "immutable_ref": "grafana/loki@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+      "index_digest": "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+      "local_image_id": "sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500",
+      "metadata_verification": "digest-pinned",
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "platform_manifest_digest": "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f",
+      "revision": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+      "version": "3.7.7"
+    },
+    "rollback": {
+      "image_repository": "grafana/loki",
+      "configured_image": "grafana/loki:3.7.6",
+      "immutable_ref": "grafana/loki@sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952",
+      "index_digest": "sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952",
+      "local_image_id": "sha256:efd47c67f9bac88ca29bcf8cb997d9ab29d1848bd0aff579282295542a745952",
+      "platform": {
+        "architecture": "amd64",
+        "os": "linux"
+      },
+      "platform_manifest_digest": null,
+      "version": "3.7.6"
+    },
+    "scheme": "semver"
+  }
+}
