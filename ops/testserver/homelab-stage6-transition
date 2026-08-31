@@ -153,6 +153,7 @@ run_preapproval_inspection() {
 
 verify_terminal_health() {
     local strategy expected status url marker tmp code
+    local network port path container_ip
 
     strategy="$(manifest_string '.health.strategy')"
 
@@ -179,6 +180,38 @@ verify_terminal_health() {
                     fail "target HTTP health marker missing"
                 }
             fi
+            rm -f "$tmp"
+            ;;
+        container-http)
+            network="$(manifest_string '.health.network')"
+            port="$(jq -r '.health.container_port' "$MANIFEST")"
+            path="$(manifest_string '.health.path')"
+            expected="$(jq -r '.health.expected_status' "$MANIFEST")"
+            marker="$(jq -r '.health.marker // ""' "$MANIFEST")"
+
+            container_ip="$(
+                docker inspect "$TARGET_CONTAINER"                   --format "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}"                   2>/dev/null
+            )" || fail "target container network address unavailable"
+
+            [ -n "$container_ip" ] ||
+                fail "target container has no address on reviewed health network"
+
+            url="http://${container_ip}:${port}${path}"
+            tmp="$(mktemp)"
+            code="$(curl -sS -o "$tmp" -w '%{http_code}' --max-time 10 "$url" 2>/dev/null || true)"
+
+            [ "$code" = "$expected" ] || {
+                rm -f "$tmp"
+                fail "target container HTTP health status is not terminal-healthy"
+            }
+
+            if [ -n "$marker" ]; then
+                grep -Fq "$marker" "$tmp" || {
+                    rm -f "$tmp"
+                    fail "target container HTTP health marker missing"
+                }
+            fi
+
             rm -f "$tmp"
             ;;
         *)
