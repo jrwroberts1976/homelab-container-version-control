@@ -1,0 +1,183 @@
+{
+  "schema_version": 1,
+  "artifact": "service-update-manifest",
+  "mode": "stage6-generic",
+  "service": {
+    "name": "alloy",
+    "container": "alloy",
+    "host": "TestServer",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project": "alloy",
+      "service": "alloy",
+      "project_directory": "/home/james/docker/stacks/alloy",
+      "compose_file": "/home/james/docker/stacks/alloy/docker-compose.yml",
+      "image_variable": "ALLOY_IMAGE"
+    }
+  },
+  "authority": {
+    "repository": "docker-env",
+    "revision": "5e810ed6b90e08d8d4b4d29f74ebda355a9b6288",
+    "compose_path": "stacks/alloy/docker-compose.yml",
+    "compose_sha256": "36e8505530cae66f6b6bb6044a432b7be511dcdb72e1986695bc935c9ee591b7"
+  },
+  "versions": {
+    "scheme": "semver",
+    "rollback": {
+      "version": "1.18.0",
+      "image_repository": "grafana/alloy",
+      "configured_image": "grafana/alloy:v1.18.0",
+      "immutable_ref": "grafana/alloy@sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+      "index_digest": "sha256:491b0578c04983fd54fe99b587b6fab4404dc46d0dc16677bd6b00cc1140b308",
+      "platform_manifest_digest": null,
+      "local_image_id": "sha256:3f7b84b7dbe7a39aba34030e3d47d559a65dbd80763a3706554f1109bff526f6",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    },
+    "candidate": {
+      "version": "1.19.2",
+      "image_repository": "grafana/alloy",
+      "immutable_ref": "grafana/alloy@sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+      "index_digest": "sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839",
+      "platform_manifest_digest": "sha256:c0642404dd4ceccf965c307afd3da3c1071f834ef3e8c039bffb1548f2316a33",
+      "config_digest": "sha256:256860bc3e190a3c3f0e4775e44af5ef0bed3b68cfb83f3b129308383e58474a",
+      "created": "2026-08-26T20:45:50.153781123Z",
+      "revision": "becfd489a7bb459c0496893b555fb87a003296b1",
+      "metadata_verification": "digest-pinned",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    }
+  },
+  "runtime": {
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": true,
+    "networks": [
+      "alloy_default"
+    ],
+    "published_ports": [
+      {
+        "host_ip": "192.168.2.220",
+        "host_port": 12345,
+        "container_port": 12345,
+        "protocol": "tcp"
+      }
+    ],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/monitoring/alloy/config.alloy",
+        "destination": "/etc/alloy/config.alloy",
+        "rw": false,
+        "source_kind": "file",
+        "sha256": "a9ddfd7a1522417a11ae0e0a45e5284058cc95ef786c58e9c3dcdfaae4dd0e25"
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/monitoring/alloy/data",
+        "destination": "/var/lib/alloy/data",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/var/log",
+        "destination": "/var/log",
+        "rw": false,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/run/log/journal",
+        "destination": "/run/log/journal",
+        "rw": false,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/etc/machine-id",
+        "destination": "/etc/machine-id",
+        "rw": false,
+        "source_kind": "file",
+        "sha256": "0879970e3f1eb9737807580219f6a643f08b0b2076e41ee34942ccbb14c54931"
+      },
+      {
+        "type": "bind",
+        "source": "/var/run/docker.sock",
+        "destination": "/var/run/docker.sock",
+        "rw": false,
+        "source_kind": "socket",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/var/lib/docker/containers",
+        "destination": "/var/lib/docker/containers",
+        "rw": false,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/var/lib/suricata",
+        "destination": "/var/lib/suricata",
+        "rw": false,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/proxy-auth/npm/data/logs",
+        "destination": "/npm-logs",
+        "rw": false,
+        "source_kind": "directory",
+        "sha256": null
+      }
+    ],
+    "compose_execution": {
+      "no_deps": true,
+      "no_build": true,
+      "pull": "never",
+      "force_recreate": true
+    }
+  },
+  "health": {
+    "strategy": "http",
+    "url": "http://192.168.2.220:12345/-/ready",
+    "expected_status": 200,
+    "marker": "Alloy is ready.",
+    "timeout_seconds": 180
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ],
+    "all_other_containers_unchanged": true,
+    "compare": [
+      "container_id",
+      "restart_count"
+    ]
+  },
+  "execution": {
+    "human_approval_required": true,
+    "post_approval_reinspection_required": true,
+    "one_shot_required": true,
+    "candidate_acquisition": "separate-reviewed-step",
+    "candidate_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "rollback_required": true,
+    "rollback_only_for_consumed_pilot": true
+  }
+}
