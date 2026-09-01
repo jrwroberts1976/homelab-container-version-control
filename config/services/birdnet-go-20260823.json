@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "artifact": "service-update-manifest",
+  "mode": "stage6-generic",
+  "service": {
+    "name": "birdnet-go",
+    "container": "birdnet-go",
+    "host": "TestServer",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project": "birdnet-go",
+      "service": "birdnet-go",
+      "project_directory": "/home/james/docker/stacks/birdnet-go",
+      "compose_file": "/home/james/docker/stacks/birdnet-go/docker-compose.yaml",
+      "image_variable": "BIRDNET_GO_IMAGE"
+    }
+  },
+  "authority": {
+    "repository": "docker-env",
+    "revision": "59f48d7857aceb9e3c84726240aa99b672489dde",
+    "compose_path": "stacks/birdnet-go/docker-compose.yaml",
+    "compose_sha256": "207da25774a03c753e7b0ec72ed1dae014fe08f76f11fddc412e336f2f749a89"
+  },
+  "versions": {
+    "scheme": "yyyymmdd",
+    "rollback": {
+      "version": "20260716",
+      "image_repository": "ghcr.io/tphakala/birdnet-go",
+      "configured_image": "ghcr.io/tphakala/birdnet-go:20260716",
+      "immutable_ref": "ghcr.io/tphakala/birdnet-go@sha256:b6382049967374b49a62ada386a6551efc3806a56c77934cd1bdf300d5c55878",
+      "index_digest": "sha256:b6382049967374b49a62ada386a6551efc3806a56c77934cd1bdf300d5c55878",
+      "platform_manifest_digest": null,
+      "local_image_id": "sha256:2dbdbc964d9b1905cee4ad855aac65ac5a34fe3a1fd49bf8d114bf22ac265211",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    },
+    "candidate": {
+      "version": "20260823",
+      "image_repository": "ghcr.io/tphakala/birdnet-go",
+      "immutable_ref": "ghcr.io/tphakala/birdnet-go@sha256:233b94f1d3b27b261ec8d997364db0cb953f3e3b3362a89e9e22ad4a589143d6",
+      "index_digest": "sha256:233b94f1d3b27b261ec8d997364db0cb953f3e3b3362a89e9e22ad4a589143d6",
+      "platform_manifest_digest": "sha256:873fb1416aec0a6570c964e68e5b5a3a1699107f5dba5ef1d303384e12e485ea",
+      "config_digest": "sha256:e908bedd443d1e4617f503142b303a1d663d3141652bb73c3c27cf50ceea6af8",
+      "revision": "30197a29859303db226f2d8d68146f2b3b3c0490",
+      "created": "2026-08-23T19:08:47.50722493Z",
+      "metadata_verification": "oci-labels",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    }
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/birdnet-go/config",
+        "destination": "/config",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      },
+      {
+        "type": "bind",
+        "source": "/home/james/docker/data/birdnet-go/data",
+        "destination": "/data",
+        "rw": true,
+        "source_kind": "directory",
+        "sha256": null
+      }
+    ],
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": true,
+    "devices": [
+      {
+        "source": "/dev/snd",
+        "destination": "/dev/snd",
+        "permissions": "rwm"
+      }
+    ],
+    "docker_socket_allowed": false,
+    "compose_execution": {
+      "no_deps": true,
+      "no_build": true,
+      "pull": "never",
+      "force_recreate": true
+    }
+  },
+  "health": {
+    "strategy": "docker-health",
+    "expected": "healthy",
+    "timeout_seconds": 360
+  },
+  "protection": {
+    "containers": [
+      "birdnet-exporter",
+      "jenkins",
+      "jenkins-docker"
+    ],
+    "all_other_containers_unchanged": true,
+    "compare": [
+      "container_id",
+      "restart_count"
+    ]
+  },
+  "execution": {
+    "human_approval_required": true,
+    "post_approval_reinspection_required": true,
+    "one_shot_required": true,
+    "candidate_acquisition": "separate-reviewed-step",
+    "candidate_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "rollback_required": true,
+    "rollback_only_for_consumed_pilot": true
+  }
+}
