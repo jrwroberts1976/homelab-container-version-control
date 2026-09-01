@@ -369,8 +369,51 @@ verify_runtime_shape() {
         fail "target read-only rootfs state mismatch"
     [ "$(jq -r '.[0].HostConfig.RestartPolicy.Name' <<<"$container_json")" = "$expected_restart" ] ||
         fail "target restart policy mismatch"
-    [ "$(jq -r '.[0].HostConfig.Devices | length' <<<"$container_json")" = "0" ] ||
-        fail "target unexpectedly has device mappings"
+    expected_devices_allowed="$(
+        jq -r '.runtime.devices_allowed' "$MANIFEST"
+    )"
+
+    expected_devices_json="$(
+        jq -S -c '.runtime.devices // []' "$MANIFEST"
+    )"
+
+    actual_devices_json="$(
+        jq -S -c '
+          [
+            .[0].HostConfig.Devices[]?
+            | {
+                source: .PathOnHost,
+                destination: .PathInContainer,
+                permissions: .CgroupPermissions
+              }
+          ]
+        ' <<<"$container_json"
+    )"
+
+    case "$expected_devices_allowed" in
+        true)
+            [ -d /dev/snd ] ||
+                fail "reviewed audio device root missing: /dev/snd"
+
+            [ "$(jq -r 'length' <<<"$expected_devices_json")" = "1" ] ||
+                fail "manifest audio device contract must contain exactly one mapping"
+
+            [ "$actual_devices_json" = "$expected_devices_json" ] ||
+                fail "target device mapping does not exactly match reviewed audio device contract"
+            ;;
+
+        false)
+            [ "$(jq -r 'length' <<<"$expected_devices_json")" = "0" ] ||
+                fail "manifest disables devices but still declares device mappings"
+
+            [ "$(jq -r 'length' <<<"$actual_devices_json")" = "0" ] ||
+                fail "target unexpectedly has device mappings"
+            ;;
+
+        *)
+            fail "manifest device policy invalid"
+            ;;
+    esac
 
     expected_docker_socket_allowed="$(
         jq -r '.runtime.docker_socket_allowed' "$MANIFEST"
