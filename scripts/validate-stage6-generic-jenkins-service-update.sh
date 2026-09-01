@@ -256,6 +256,158 @@ validate_case(
 print("PASS: Docker socket positive/negative contract complete")
 PYTEST
 
+printf '\n===== REVIEWED AUDIO DEVICE CONTRACT =====\n'
+
+python3 - <<'PYDEVICE'
+import copy
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+base = json.loads(
+    Path("config/services/dashy-4.6.0.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+audio_device = {
+    "source": "/dev/snd",
+    "destination": "/dev/snd",
+    "permissions": "rwm",
+}
+
+
+def validate_case(name, manifest, should_pass):
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".json",
+        delete=False,
+    ) as handle:
+        json.dump(manifest, handle)
+        handle.write("\n")
+        filename = Path(handle.name)
+
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "scripts/validate-stage6-service-manifest.py",
+                str(filename),
+                "--schema",
+                "config/service-update-manifest.schema.json",
+            ],
+            text=True,
+            capture_output=True,
+        )
+
+        actual_pass = proc.returncode == 0
+
+        if actual_pass != should_pass:
+            print(f"FAIL: {name}")
+            print(proc.stdout)
+            print(proc.stderr, file=sys.stderr)
+            raise SystemExit(2)
+
+        result = "PASS" if should_pass else "REJECTED"
+        print(f"PASS: {name} -> {result}")
+
+    finally:
+        filename.unlink(missing_ok=True)
+
+
+safe = copy.deepcopy(base)
+safe["service"]["risk_class"] = "medium"
+safe["runtime"]["devices_allowed"] = True
+safe["runtime"]["devices"] = [
+    copy.deepcopy(audio_device)
+]
+safe["runtime"]["docker_socket_allowed"] = False
+
+validate_case(
+    "exact medium-risk /dev/snd audio device",
+    safe,
+    True,
+)
+
+low_risk = copy.deepcopy(safe)
+low_risk["service"]["risk_class"] = "low"
+validate_case(
+    "low-risk audio device",
+    low_risk,
+    False,
+)
+
+wrong_source = copy.deepcopy(safe)
+wrong_source["runtime"]["devices"][0]["source"] = "/dev/video0"
+validate_case(
+    "alternate audio device source",
+    wrong_source,
+    False,
+)
+
+wrong_destination = copy.deepcopy(safe)
+wrong_destination["runtime"]["devices"][0][
+    "destination"
+] = "/dev/audio"
+validate_case(
+    "alternate audio device destination",
+    wrong_destination,
+    False,
+)
+
+wrong_permissions = copy.deepcopy(safe)
+wrong_permissions["runtime"]["devices"][0][
+    "permissions"
+] = "rw"
+validate_case(
+    "alternate audio device permissions",
+    wrong_permissions,
+    False,
+)
+
+disabled = copy.deepcopy(safe)
+disabled["runtime"]["devices_allowed"] = False
+validate_case(
+    "device mapping present while policy disabled",
+    disabled,
+    False,
+)
+
+missing = copy.deepcopy(base)
+missing["service"]["risk_class"] = "medium"
+missing["runtime"]["devices_allowed"] = True
+missing["runtime"]["devices"] = []
+missing["runtime"]["docker_socket_allowed"] = False
+validate_case(
+    "audio device policy enabled without mapping",
+    missing,
+    False,
+)
+
+socket_combo = copy.deepcopy(safe)
+socket_combo["runtime"]["docker_socket_allowed"] = True
+socket_combo["runtime"]["mounts"].append(
+    {
+        "type": "bind",
+        "source": "/var/run/docker.sock",
+        "destination": "/var/run/docker.sock",
+        "rw": False,
+        "source_kind": "socket",
+        "sha256": None,
+    }
+)
+validate_case(
+    "audio device combined with Docker socket",
+    socket_combo,
+    False,
+)
+
+print("PASS: reviewed audio device positive/negative contract complete")
+PYDEVICE
+
 for helper in \
     ops/testserver/homelab-stage6-inspect \
     ops/testserver/homelab-stage6-execute
@@ -269,6 +421,31 @@ do
         '[ -S "$source" ]' \
         "$helper" >/dev/null ||
         fail "Unix socket type gate missing: $helper"
+
+    grep -F \
+        'expected_devices_allowed' \
+        "$helper" >/dev/null ||
+        fail "audio device policy gate missing: $helper"
+
+    grep -F \
+        'source: .PathOnHost' \
+        "$helper" >/dev/null ||
+        fail "audio device host-path runtime gate missing: $helper"
+
+    grep -F \
+        'destination: .PathInContainer' \
+        "$helper" >/dev/null ||
+        fail "audio device container-path runtime gate missing: $helper"
+
+    grep -F \
+        'permissions: .CgroupPermissions' \
+        "$helper" >/dev/null ||
+        fail "audio device permission runtime gate missing: $helper"
+
+    grep -F \
+        'target device mapping does not exactly match reviewed audio device contract' \
+        "$helper" >/dev/null ||
+        fail "exact audio device runtime comparison missing: $helper"
 done
 
 grep -F \
