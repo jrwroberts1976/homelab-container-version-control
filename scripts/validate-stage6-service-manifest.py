@@ -237,7 +237,56 @@ def validate_manifest(manifest: dict) -> None:
     networks = runtime.get("networks") or []
     require(networks and len(networks) == len(set(networks)), "runtime networks must be non-empty and unique")
     require(runtime.get("privileged") is False, "privileged containers are not eligible")
-    require(runtime.get("devices_allowed") is False, "device access is not eligible")
+
+    devices_allowed = runtime.get("devices_allowed")
+    require(
+        isinstance(devices_allowed, bool),
+        "runtime.devices_allowed must be boolean",
+    )
+
+    devices = runtime.get("devices") or []
+    require(
+        isinstance(devices, list),
+        "runtime.devices must be an array",
+    )
+
+    if devices_allowed:
+        require(
+            host == "TestServer",
+            "reviewed audio-device access is currently TestServer-only",
+        )
+        require(
+            service.get("risk_class") == "medium",
+            "audio-device eligibility requires medium risk class",
+        )
+        require(
+            len(devices) == 1,
+            "audio-device eligibility requires exactly one device mapping",
+        )
+
+        device = devices[0]
+
+        require(
+            isinstance(device, dict),
+            "runtime device entry must be an object",
+        )
+        require(
+            device.get("source") == "/dev/snd",
+            "audio device source must be exactly /dev/snd",
+        )
+        require(
+            device.get("destination") == "/dev/snd",
+            "audio device destination must be exactly /dev/snd",
+        )
+        require(
+            device.get("permissions") == "rwm",
+            "audio device permissions must be exactly rwm",
+        )
+    else:
+        require(
+            not devices,
+            "device mappings require devices_allowed=true",
+        )
 
     docker_socket_allowed = runtime.get("docker_socket_allowed")
 
@@ -245,6 +294,12 @@ def validate_manifest(manifest: dict) -> None:
         isinstance(docker_socket_allowed, bool),
         "runtime.docker_socket_allowed must be boolean",
     )
+
+    if devices_allowed:
+        require(
+            docker_socket_allowed is False,
+            "audio-device workloads may not also expose the Docker socket",
+        )
 
     mounts = runtime.get("mounts") or []
     socket_mounts = []

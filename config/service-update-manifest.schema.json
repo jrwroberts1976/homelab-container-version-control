@@ -177,7 +177,23 @@
         "privileged": { "const": false },
         "readonly_rootfs": { "type": "boolean" },
         "restart_policy": { "type": "string", "minLength": 1 },
-        "devices_allowed": { "const": false },
+        "devices_allowed": { "type": "boolean" },
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "destination", "permissions"],
+            "properties": {
+              "source": { "const": "/dev/snd" },
+              "destination": { "const": "/dev/snd" },
+              "permissions": { "const": "rwm" }
+            }
+          }
+        },
         "docker_socket_allowed": { "type": "boolean" },
         "compose_execution": {
           "type": "object",
