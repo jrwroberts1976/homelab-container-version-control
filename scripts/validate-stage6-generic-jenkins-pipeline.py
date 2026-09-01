@@ -90,7 +90,7 @@ def main() -> int:
         'env.STAGE6_ROLLBACK_REF = rollback?.immutable_ref?.toString()',
         'env.STAGE6_ROLLBACK_IMAGE_ID = rollback?.local_image_id?.toString()',
         'env.STAGE6_CANDIDATE_REF = candidate?.immutable_ref?.toString()',
-        'env.STAGE6_CANDIDATE_IMAGE_ID = candidate?.config_digest?.toString()',
+        'env.STAGE6_CANDIDATE_IMAGE_ID = (candidate?.local_image_id ?: candidate?.config_digest)?.toString()',
         'env.STAGE6_HEALTH_RESULT = healthResult',
         'env.STAGE6_MANIFEST_SHA256 = sh(',
         'env.STAGE6_INSPECTOR_SOURCE_SHA256 = sh(',
@@ -117,15 +117,15 @@ def main() -> int:
     require_order(text, required_stages, "pipeline stage")
 
     drift_pos = text.find("stage('Assert zero drift after approval')")
-    first_executor_credential = text.find("credentialsId: 'homelab-stage6-testserver-executor'")
+    first_executor_credential = text.find("credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL")
     require(drift_pos >= 0 and first_executor_credential > drift_pos, "executor credential appears before zero-drift gate")
 
     require(
-        count(text, "credentialsId: 'homelab-stage6-testserver-inspector'") == 2,
+        count(text, "credentialsId: env.STAGE6_INSPECTOR_CREDENTIAL") == 2,
         "pipeline must bind inspector credential exactly twice",
     )
     require(
-        count(text, "credentialsId: 'homelab-stage6-testserver-executor'") == 5,
+        count(text, "credentialsId: env.STAGE6_EXECUTOR_CREDENTIAL") == 5,
         "pipeline must bind executor credential exactly five times",
     )
 
