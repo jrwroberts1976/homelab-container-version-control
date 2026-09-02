@@ -8,6 +8,12 @@ pipeline {
   }
 
   parameters {
+    choice(
+      name: 'STAGE6_ACTION',
+      choices: ['VERIFY_CLOSED', 'UPDATE'],
+      description: 'VERIFY_CLOSED proves existing closed state without mutation; UPDATE runs the reviewed deployment path'
+    )
+
     string(
       name: 'STAGE6_MANIFEST',
       defaultValue: '',
@@ -30,6 +36,11 @@ pipeline {
     stage('Load reviewed manifest') {
       steps {
         script {
+          def action = params.STAGE6_ACTION?.trim()
+          if (!(action in ['VERIFY_CLOSED', 'UPDATE'])) {
+            error('STAGE6_ACTION must be VERIFY_CLOSED or UPDATE')
+          }
+
           def manifestName = params.STAGE6_MANIFEST?.trim()
 
           if (!manifestName || !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
@@ -157,7 +168,43 @@ pipeline {
       }
     }
 
+    stage('VERIFY_CLOSED') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'VERIFY_CLOSED'
+        }
+      }
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: env.STAGE6_INSPECTOR_CREDENTIAL,
+            keyFileVariable: 'STAGE6_INSPECT_KEY',
+            usernameVariable: 'STAGE6_INSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            python3 scripts/stage6-verify-closed.py \
+              --manifest "$STAGE6_MANIFEST_PATH" \
+              --host "$STAGE6_HOST" \
+              --known-hosts "$STAGE6_KNOWN_HOSTS" \
+              --hostkey-fingerprint "$STAGE6_HOSTKEY_FINGERPRINT" \
+              --ssh-user "$STAGE6_INSPECT_USER" \
+              --ssh-key "$STAGE6_INSPECT_KEY" \
+              --artifact-dir artifacts
+          '''
+        }
+      }
+    }
+
     stage('Source and host-key preflight') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         sh '''
           set -eu
@@ -221,6 +268,11 @@ pipeline {
     }
 
     stage('Pre-approval inspection') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         withCredentials([
           sshUserPrivateKey(
@@ -257,6 +309,11 @@ pipeline {
     }
 
     stage('Assert pre-approval artifact') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         script {
           def raw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-inspection-before-approval.json")
@@ -353,6 +410,11 @@ pipeline {
     }
 
     stage('Human approval') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         script {
           timeout(time: 60, unit: 'MINUTES') {
@@ -385,6 +447,11 @@ pipeline {
     }
 
     stage('Re-inspect after approval') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         withCredentials([
           sshUserPrivateKey(
@@ -421,6 +488,11 @@ pipeline {
     }
 
     stage('Assert zero drift after approval') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         script {
           def beforeRaw = readFile("${env.STAGE6_ARTIFACT_PREFIX}-critical-before-approval.json")
@@ -481,6 +553,11 @@ pipeline {
     }
 
     stage('Executor preflight after approval') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         withCredentials([
           sshUserPrivateKey(
@@ -527,6 +604,11 @@ pipeline {
     }
 
     stage('Arm exact update') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         withCredentials([
           sshUserPrivateKey(
@@ -593,6 +675,11 @@ pipeline {
     }
 
     stage('Deploy exact candidate') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         script {
           int rc = 99
@@ -689,7 +776,8 @@ pipeline {
     stage('Rollback on deploy failure') {
       when {
         expression {
-          return env.STAGE6_DEPLOY_RC != null &&
+          return params.STAGE6_ACTION == 'UPDATE' &&
+                 env.STAGE6_DEPLOY_RC != null &&
                  env.STAGE6_DEPLOY_RC != '0' &&
                  env.STAGE6_DEPLOY_RC != '96' &&
                  env.STAGE6_DEPLOY_RC != '97'
@@ -784,7 +872,8 @@ pipeline {
     stage('Disarm terminal state') {
       when {
         expression {
-          return env.STAGE6_DEPLOY_RC == '0' || env.STAGE6_ROLLBACK_RC == '0'
+          return params.STAGE6_ACTION == 'UPDATE' &&
+                 (env.STAGE6_DEPLOY_RC == '0' || env.STAGE6_ROLLBACK_RC == '0')
         }
       }
       steps {
@@ -850,6 +939,11 @@ pipeline {
     }
 
     stage('Final pipeline result') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
       steps {
         script {
           if (env.STAGE6_DEPLOY_RC == '0') {
