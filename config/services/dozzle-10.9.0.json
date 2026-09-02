@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "artifact": "service-update-manifest",
+  "mode": "stage6-generic",
+  "service": {
+    "name": "dozzle",
+    "container": "dozzle",
+    "host": "TestServer",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project": "management",
+      "service": "dozzle",
+      "project_directory": "/home/james/docker/stacks/management",
+      "compose_file": "/home/james/docker/stacks/management/docker-compose.yml",
+      "image_variable": "DOZZLE_IMAGE"
+    }
+  },
+  "authority": {
+    "repository": "docker-env",
+    "revision": "59f48d7857aceb9e3c84726240aa99b672489dde",
+    "compose_sha256": "80215935aa7815ed39853483934e834ef44c96dce8d0939f9644764c289a2485",
+    "compose_path": "stacks/management/docker-compose.yml"
+  },
+  "versions": {
+    "scheme": "semver",
+    "rollback": {
+      "version": "10.8.0",
+      "image_repository": "amir20/dozzle",
+      "configured_image": "amir20/dozzle@sha256:243666b0593ff33ed1373901575236f0d6bed8a2d6b451cdae4345969a7b6d5c",
+      "immutable_ref": "amir20/dozzle@sha256:243666b0593ff33ed1373901575236f0d6bed8a2d6b451cdae4345969a7b6d5c",
+      "index_digest": "sha256:243666b0593ff33ed1373901575236f0d6bed8a2d6b451cdae4345969a7b6d5c",
+      "platform_manifest_digest": null,
+      "local_image_id": "sha256:eca1774c3ff18eb6ff177d0d557b2ff37da5df6f7c617450b4eca48327f20ce8",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    },
+    "candidate": {
+      "version": "10.9.0",
+      "image_repository": "amir20/dozzle",
+      "immutable_ref": "amir20/dozzle@sha256:7f01a2504f89788b60ad0efddd94472fd66f9a225c708356cdb815d9d8abd184",
+      "index_digest": "sha256:7f01a2504f89788b60ad0efddd94472fd66f9a225c708356cdb815d9d8abd184",
+      "platform_manifest_digest": "sha256:dedcf5fc948e8eb5a325182d2743a59d8540e4a6ca740e0c064826e0e86c1fa9",
+      "config_digest": "sha256:88b0c06d1a3c881893d2162afa4b19d1b91262e1ae92a90e661d8ccc2a5549d9",
+      "created": "2026-09-02T00:42:23.092303923Z",
+      "revision": "5dba2be0c31293b3990861fc7c04a6b1932c6989",
+      "metadata_verification": "digest-pinned",
+      "platform": {
+        "os": "linux",
+        "architecture": "arm64"
+      }
+    }
+  },
+  "runtime": {
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": true,
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/var/run/docker.sock",
+        "destination": "/var/run/docker.sock",
+        "rw": false,
+        "source_kind": "socket",
+        "sha256": null
+      }
+    ],
+    "compose_execution": {
+      "no_deps": true,
+      "no_build": true,
+      "pull": "never",
+      "force_recreate": true
+    }
+  },
+  "health": {
+    "strategy": "container-http",
+    "network": "homelab_apps",
+    "container_port": 8080,
+    "path": "/",
+    "expected_status": 200,
+    "marker": null,
+    "timeout_seconds": 180
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ],
+    "all_other_containers_unchanged": true,
+    "compare": [
+      "container_id",
+      "restart_count"
+    ]
+  },
+  "execution": {
+    "human_approval_required": true,
+    "post_approval_reinspection_required": true,
+    "one_shot_required": true,
+    "candidate_acquisition": "separate-reviewed-step",
+    "candidate_must_be_local_before_arm": true,
+    "deployment_pull_allowed": false,
+    "rollback_required": true,
+    "rollback_only_for_consumed_pilot": true
+  }
+}
