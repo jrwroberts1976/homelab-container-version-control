@@ -4,7 +4,7 @@
   "mode": "stage6-steady-state",
   "authority": {
     "repository": "docker-env",
-    "revision": "ba183402d11b8a2def59bf7f50893c1667aff9ac",
+    "revision": "59f48d7857aceb9e3c84726240aa99b672489dde",
     "compose_sha256": "80215935aa7815ed39853483934e834ef44c96dce8d0939f9644764c289a2485",
     "compose_path": "stacks/management/docker-compose.yml"
   },

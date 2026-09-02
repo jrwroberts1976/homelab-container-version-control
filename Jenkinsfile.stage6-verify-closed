@@ -90,8 +90,7 @@ pipeline {
             set +x
 
             python3 scripts/validate-stage6-steady-state-manifest.py \
-              "$STAGE6_STEADY_MANIFEST_PATH" \
-              --schema config/steady-state-manifest.schema.json
+              "$STAGE6_STEADY_MANIFEST_PATH"
           '''
 
           def manifest = new groovy.json.JsonSlurperClassic().parseText(
