@@ -33,7 +33,67 @@ pipeline {
       }
     }
 
+    stage('Prepare missing manifest') {
+      steps {
+        script {
+          def action = params.STAGE6_ACTION?.trim()
+          if (!(action in ['VERIFY_CLOSED', 'UPDATE'])) {
+            error('STAGE6_ACTION must be VERIFY_CLOSED or UPDATE')
+          }
+
+          def manifestName = params.STAGE6_MANIFEST?.trim()
+
+          if (!manifestName ||
+              !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\\.json$/)) {
+            error('STAGE6_MANIFEST must be one safe manifest filename ending in .json')
+          }
+
+          def manifestPath = "config/services/${manifestName}"
+
+          if (fileExists(manifestPath)) {
+            env.STAGE6_MANIFEST_PREPARED = 'false'
+            echo("PASS: reviewed Stage 6 manifest already present: ${manifestPath}")
+          } else {
+            env.STAGE6_MANIFEST_PREPARED = 'true'
+
+            sh '''
+              set -eu
+              set +x
+
+              python3 scripts/prepare-stage6-service-manifest.py \
+                --manifest-name "$STAGE6_MANIFEST" \
+                --output-dir artifacts
+            '''
+
+            def preparedPath = "artifacts/${manifestName}"
+
+            if (!fileExists(preparedPath)) {
+              error("Prepared Stage 6 manifest not found: ${preparedPath}")
+            }
+
+            echo("MANIFEST_PREPARED_REVIEW_REQUIRED: ${preparedPath}")
+          }
+        }
+      }
+    }
+
+    stage('Manifest review required') {
+      when {
+        expression {
+          env.STAGE6_MANIFEST_PREPARED == 'true'
+        }
+      }
+      steps {
+        echo('SUCCESS: requested Stage 6 manifest prepared and archived; review/commit required before deployment')
+      }
+    }
+
     stage('Load reviewed manifest') {
+      when {
+        expression {
+          env.STAGE6_MANIFEST_PREPARED != 'true'
+        }
+      }
       steps {
         script {
           def action = params.STAGE6_ACTION?.trim()
@@ -171,7 +231,7 @@ pipeline {
     stage('VERIFY_CLOSED') {
       when {
         expression {
-          params.STAGE6_ACTION == 'VERIFY_CLOSED'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'VERIFY_CLOSED'
         }
       }
       steps {
@@ -202,7 +262,7 @@ pipeline {
     stage('Source and host-key preflight') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -270,7 +330,7 @@ pipeline {
     stage('Pre-approval inspection') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -311,7 +371,7 @@ pipeline {
     stage('Assert pre-approval artifact') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -412,7 +472,7 @@ pipeline {
     stage('Human approval') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -449,7 +509,7 @@ pipeline {
     stage('Re-inspect after approval') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -490,7 +550,7 @@ pipeline {
     stage('Assert zero drift after approval') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -555,7 +615,7 @@ pipeline {
     stage('Executor preflight after approval') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -606,7 +666,7 @@ pipeline {
     stage('Arm exact update') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -677,7 +737,7 @@ pipeline {
     stage('Deploy exact candidate') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -776,7 +836,7 @@ pipeline {
     stage('Rollback on deploy failure') {
       when {
         expression {
-          return params.STAGE6_ACTION == 'UPDATE' &&
+          return env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE' &&
                  env.STAGE6_DEPLOY_RC != null &&
                  env.STAGE6_DEPLOY_RC != '0' &&
                  env.STAGE6_DEPLOY_RC != '96' &&
@@ -872,7 +932,7 @@ pipeline {
     stage('Disarm terminal state') {
       when {
         expression {
-          return params.STAGE6_ACTION == 'UPDATE' &&
+          return env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE' &&
                  (env.STAGE6_DEPLOY_RC == '0' || env.STAGE6_ROLLBACK_RC == '0')
         }
       }
@@ -941,7 +1001,7 @@ pipeline {
     stage('Final pipeline result') {
       when {
         expression {
-          params.STAGE6_ACTION == 'UPDATE'
+          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -962,7 +1022,7 @@ pipeline {
   post {
     always {
       archiveArtifacts(
-        artifacts: 'artifacts/stage6-*',
+        artifacts: 'artifacts/**',
         allowEmptyArchive: true,
         fingerprint: true
       )
