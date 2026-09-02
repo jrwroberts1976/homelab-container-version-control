@@ -1,6 +1,6 @@
 # Jenkins job control
 
-This directory stores reproducible Jenkins job definitions that are part of the container-version-control operating model.
+This directory documents reproducible Jenkins job control that is part of the container-version-control operating model.
 
 ## TestServer controller
 
@@ -14,41 +14,39 @@ Current reviewed controller facts on TestServer (2 September 2026):
 - security realm: `hudson.security.HudsonPrivateSecurityRealm`
 - authorization strategy: `hudson.security.FullControlOnceLoggedInAuthorizationStrategy`
 
-The Jenkins container currently does not expose `java` on its shell `PATH`, so job provisioning should not assume that the Jenkins CLI can be executed from inside the controller container. Use an authenticated controller API/web flow or other reviewed host-side provisioning mechanism.
+The Jenkins Java runtime is `/opt/java/openjdk/bin/java`; it is not available on the shell `PATH` by default.
 
 Do not store Jenkins usernames, passwords, API tokens, private SSH keys or other credentials in this repository.
 
-## Stage 6 VERIFY_CLOSED
+## Stage 6 generic job
 
-Git-owned job definition:
-
-```text
-jenkins/jobs/stage6-verify-closed.xml
-```
-
-Expected Jenkins job name:
+Stage 6 reuses the existing Jenkins job:
 
 ```text
-stage6-verify-closed
+stage6-generic-service-update
 ```
 
-The job is a Pipeline-from-SCM definition using:
+Pipeline-from-SCM definition:
 
 ```text
 repository: https://github.com/jrwroberts1976/homelab-container-version-control.git
 branch:     */main
-scriptPath: Jenkinsfile.stage6-verify-closed
-parameter:  STAGE6_SERVICE
+scriptPath: Jenkinsfile.stage6-service-update
 ```
 
-The default qualification target is `dozzle`.
+`VERIFY_CLOSED` is an action of this existing generic Stage 6 job, not a separate Jenkins job. The generic pipeline must route actions fail-closed:
 
-This job is intentionally separate from `stage6-generic-service-update`. Its contract is read-only verification of an already-closed service. It must not acquire a candidate, bind the deployment executor, arm an update, run Compose lifecycle commands, recreate/restart the target, or clear consumed deployment evidence.
+```text
+UPDATE        -> existing reviewed update/deployment path
+VERIFY_CLOSED -> reviewed catalogue/steady-state read-only verification path
+```
 
-Expected successful result:
+The `VERIFY_CLOSED` path must not acquire a candidate, bind the deployment executor, arm an update, run Compose lifecycle commands, recreate/restart the target, or clear consumed deployment evidence.
+
+Expected successful verification result:
 
 ```text
 SUCCESS_VERIFIED_CLOSED
 ```
 
-Before provisioning or replacing the live job, compare the reviewed XML with the active Jenkins job configuration and preserve the existing credential store. The job definition contains no credentials; the Pipeline binds the reviewed inspector credential by Jenkins credential ID at runtime.
+The standalone `Jenkinsfile.stage6-verify-closed` currently captures the reviewed non-mutating verification contract and is implementation/reference material while that action is folded into `Jenkinsfile.stage6-service-update`.
