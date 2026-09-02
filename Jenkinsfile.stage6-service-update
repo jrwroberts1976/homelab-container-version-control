@@ -44,7 +44,7 @@ pipeline {
           def manifestName = params.STAGE6_MANIFEST?.trim()
 
           if (!manifestName ||
-              !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\\.json$/)) {
+              !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
             error('STAGE6_MANIFEST must be one safe manifest filename ending in .json')
           }
 
