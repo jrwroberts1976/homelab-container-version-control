@@ -121,20 +121,12 @@ def inspect_verbose(reference):
 
 
 def select_reference(repository, version, template):
-    successes = []
     for reference in tag_candidates(repository, version, template):
         data = inspect_verbose(reference)
         if data is not None:
-            successes.append((reference, data))
+            return reference, data
 
-    if not successes:
-        fail("no reviewed candidate tag convention resolved upstream")
-
-    if len(successes) > 1:
-        refs = ", ".join(item[0] for item in successes)
-        fail(f"candidate tag convention is ambiguous upstream: {refs}")
-
-    return successes[0]
+    fail("no reviewed candidate tag convention resolved upstream")
 
 
 def platform_manifest(verbose, os_name, architecture):
