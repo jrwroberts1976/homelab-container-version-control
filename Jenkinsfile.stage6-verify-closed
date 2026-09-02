@@ -1,0 +1,303 @@
+pipeline {
+  agent any
+
+  options {
+    skipDefaultCheckout(true)
+    disableConcurrentBuilds()
+    timestamps()
+  }
+
+  parameters {
+    string(
+      name: 'STAGE6_SERVICE',
+      defaultValue: 'dozzle',
+      description: 'Reviewed managed-tested TestServer service to verify without mutation'
+    )
+  }
+
+  environment {
+    STAGE6_HOST = '172.30.255.249'
+    STAGE6_KNOWN_HOSTS = '/var/jenkins_home/.ssh/stage4-testserver-known_hosts'
+    STAGE6_HOSTKEY_FINGERPRINT = 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk'
+    STAGE6_INSPECTOR_CREDENTIAL = 'homelab-stage6-testserver-inspector'
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Load reviewed closed state') {
+      steps {
+        script {
+          def service = params.STAGE6_SERVICE?.trim()
+
+          if (!service || !(service ==~ /^[a-z0-9][a-z0-9-]*$/)) {
+            error('STAGE6_SERVICE must be one safe reviewed service name')
+          }
+
+          if (!fileExists('config/estate-updater-catalog.json')) {
+            error('Estate updater catalogue is missing')
+          }
+
+          def catalogue = new groovy.json.JsonSlurperClassic().parseText(
+            readFile('config/estate-updater-catalog.json')
+          )
+
+          def serviceEntry = catalogue.services?[service]
+          def hostEntry = serviceEntry?.hosts?.TestServer
+          def desiredVersion = serviceEntry?.desired_version?.toString()
+
+          if (serviceEntry == null || hostEntry == null) {
+            error('Service is not a reviewed TestServer catalogue entry')
+          }
+
+          if (!desiredVersion ||
+              hostEntry.current_version?.toString() != desiredVersion ||
+              hostEntry.coverage?.toString() != 'managed-tested' ||
+              hostEntry.inspect_ready != true) {
+            error('Catalogue entry is not a closed managed-tested state')
+          }
+
+          def configuredImage = hostEntry.configured_image?.toString()
+          if (!configuredImage ||
+              !(configuredImage ==~ /^.+@sha256:[0-9a-f]{64}$/)) {
+            error('Catalogue configured image is not exact immutable desired state')
+          }
+
+          def declaredSteady = hostEntry.steady_state_manifest?.toString()
+          if (!declaredSteady || !(declaredSteady ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
+            error('Catalogue steady-state manifest reference is invalid')
+          }
+
+          def candidates = [
+            "config/steady-state/${service}-${desiredVersion}.json",
+            "config/steady-state/${declaredSteady}"
+          ].unique()
+
+          def manifestPath = candidates.find { fileExists(it) }
+          if (!manifestPath) {
+            error("Reviewed steady-state manifest not found for ${service}")
+          }
+
+          env.STAGE6_SERVICE = service
+          env.STAGE6_STEADY_MANIFEST_PATH = manifestPath
+
+          sh '''
+            set -eu
+            set +x
+
+            python3 scripts/validate-stage6-steady-state-manifest.py \
+              "$STAGE6_STEADY_MANIFEST_PATH" \
+              --schema config/steady-state-manifest.schema.json
+          '''
+
+          def manifest = new groovy.json.JsonSlurperClassic().parseText(
+            readFile(manifestPath)
+          )
+
+          if (manifest.service?.name?.toString() != service ||
+              manifest.service?.container?.toString() != service ||
+              manifest.service?.compose?.service?.toString() != service ||
+              manifest.service?.host?.toString() != 'TestServer' ||
+              manifest.service?.image_type?.toString() != 'registry-image') {
+            error('Steady-state manifest service identity mismatch')
+          }
+
+          if (manifest.desired?.version?.toString() != desiredVersion ||
+              manifest.desired?.configured_image?.toString() != configuredImage ||
+              manifest.desired?.immutable_ref?.toString() != configuredImage) {
+            error('Catalogue and steady-state desired identity disagree')
+          }
+
+          def localImageId = manifest.desired?.local_image_id?.toString()
+          if (!localImageId || !(localImageId ==~ /^sha256:[0-9a-f]{64}$/)) {
+            error('Steady-state local image ID is invalid')
+          }
+
+          def authorityRevision = manifest.authority?.revision?.toString()
+          def composeSha = manifest.authority?.compose_sha256?.toString()
+          if (!authorityRevision || !(authorityRevision ==~ /^[0-9a-f]{40}$/) ||
+              !composeSha || !(composeSha ==~ /^[0-9a-f]{64}$/)) {
+            error('Steady-state authority identity is invalid')
+          }
+
+          env.STAGE6_EXPECTED_VERSION = desiredVersion
+          env.STAGE6_EXPECTED_IMAGE = configuredImage
+          env.STAGE6_EXPECTED_LOCAL_IMAGE_ID = localImageId
+          env.STAGE6_EXPECTED_AUTHORITY_REVISION = authorityRevision
+          env.STAGE6_EXPECTED_COMPOSE_SHA = composeSha
+          env.STAGE6_EXPECTED_HEALTH = manifest.health?.expected?.toString()
+          env.STAGE6_EXPECTED_MANIFEST_SHA = sh(
+            returnStdout: true,
+            script: '''sha256sum "$STAGE6_STEADY_MANIFEST_PATH" | awk '{print $1}' '''
+          ).trim()
+          env.STAGE6_ARTIFACT = "artifacts/stage6-${service}-verify-closed.json"
+
+          echo("PASS: loaded reviewed closed state for ${service} ${desiredVersion}")
+        }
+      }
+    }
+
+    stage('Read-only transport preflight') {
+      steps {
+        sh '''
+          set -eu
+          set +x
+
+          test -f ops/testserver/homelab-stage6-inspector-ssh
+          test -f ops/testserver/homelab-stage6-inspector-sudoers
+          test -f ops/testserver/homelab-stage6-steady-inspect
+          test -f scripts/validate-stage6-steady-state-manifest.py
+          test -f config/steady-state-manifest.schema.json
+          test -s "$STAGE6_KNOWN_HOSTS"
+
+          grep -F '/usr/local/libexec/homelab-stage6-steady-inspect' \
+            ops/testserver/homelab-stage6-inspector-ssh >/dev/null
+
+          grep -F '/usr/local/libexec/homelab-stage6-steady-inspect' \
+            ops/testserver/homelab-stage6-inspector-sudoers >/dev/null
+
+          ssh-keygen \
+            -lf "$STAGE6_KNOWN_HOSTS" \
+            -E sha256 |
+          awk '{print $2}' |
+          grep -Fx "$STAGE6_HOSTKEY_FINGERPRINT" >/dev/null
+
+          install -d -m 0700 artifacts
+          rm -f "$STAGE6_ARTIFACT"
+
+          echo 'PASS: read-only steady-state transport source and host key pinned'
+        '''
+      }
+    }
+
+    stage('Verify closed state') {
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: env.STAGE6_INSPECTOR_CREDENTIAL,
+            keyFileVariable: 'STAGE6_INSPECT_KEY',
+            usernameVariable: 'STAGE6_INSPECT_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_INSPECT_USER" = "homelab-stage6-inspector" ]
+
+            ssh \
+              -n \
+              -i "$STAGE6_INSPECT_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_INSPECT_USER@$STAGE6_HOST" \
+              "steady-inspect $STAGE6_SERVICE" \
+              </dev/null \
+              > "$STAGE6_ARTIFACT"
+
+            test -s "$STAGE6_ARTIFACT"
+          '''
+        }
+      }
+    }
+
+    stage('Assert closed-state evidence') {
+      steps {
+        script {
+          def artifact = new groovy.json.JsonSlurperClassic().parseText(
+            readFile(env.STAGE6_ARTIFACT)
+          )
+
+          if (artifact.schema_version != 1 ||
+              artifact.artifact != 'service-steady-state-inspection' ||
+              artifact.mode != 'read-only' ||
+              artifact.service != env.STAGE6_SERVICE ||
+              artifact.host != 'TestServer' ||
+              artifact.result != 'steady-state-verified') {
+            error('Unexpected steady-state inspection identity')
+          }
+
+          if (artifact.manifest?.sha256 != env.STAGE6_EXPECTED_MANIFEST_SHA ||
+              artifact.authority?.revision != env.STAGE6_EXPECTED_AUTHORITY_REVISION ||
+              artifact.authority?.compose_sha256 != env.STAGE6_EXPECTED_COMPOSE_SHA ||
+              artifact.authority?.clean != true) {
+            error('Reviewed steady-state authority proof failed')
+          }
+
+          if (artifact.desired?.version != env.STAGE6_EXPECTED_VERSION ||
+              artifact.desired?.configured_image != env.STAGE6_EXPECTED_IMAGE ||
+              artifact.desired?.immutable_ref != env.STAGE6_EXPECTED_IMAGE ||
+              artifact.desired?.local_image_id != env.STAGE6_EXPECTED_LOCAL_IMAGE_ID) {
+            error('Desired immutable image proof failed')
+          }
+
+          if (artifact.runtime?.running != true ||
+              artifact.mutation_allowed != false ||
+              artifact.deployment?.allowed != false ||
+              artifact.deployment?.performed != false) {
+            error('Closed-state verification was not strictly non-mutating')
+          }
+
+          if (env.STAGE6_EXPECTED_HEALTH &&
+              artifact.health?.status?.toString() != env.STAGE6_EXPECTED_HEALTH) {
+            error('Steady-state health proof failed')
+          }
+
+          def protectedByName = [:]
+          (artifact.protected_containers ?: []).each { p ->
+            protectedByName[p.name?.toString()] = p
+          }
+
+          ['jenkins', 'jenkins-docker'].each { name ->
+            def p = protectedByName[name]
+            if (p == null || p.running != true) {
+              error("Protected control-plane evidence failed for ${name}")
+            }
+          }
+
+          def summary = [
+            schema_version: 1,
+            artifact: 'stage6-verify-closed-result',
+            service: env.STAGE6_SERVICE,
+            host: 'TestServer',
+            desired_version: env.STAGE6_EXPECTED_VERSION,
+            configured_image: env.STAGE6_EXPECTED_IMAGE,
+            authority_revision: env.STAGE6_EXPECTED_AUTHORITY_REVISION,
+            compose_sha256: env.STAGE6_EXPECTED_COMPOSE_SHA,
+            mutation_performed: false,
+            deployment_performed: false,
+            result: 'SUCCESS_VERIFIED_CLOSED'
+          ]
+
+          writeFile(
+            file: "artifacts/stage6-${env.STAGE6_SERVICE}-verify-closed-summary.json",
+            text: groovy.json.JsonOutput.prettyPrint(
+              groovy.json.JsonOutput.toJson(summary)
+            ) + '\n'
+          )
+
+          echo("SUCCESS_VERIFIED_CLOSED: ${env.STAGE6_SERVICE} matches reviewed authority, desired state and runtime without mutation")
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts(
+        artifacts: 'artifacts/stage6-*-verify-closed*.json',
+        allowEmptyArchive: true,
+        fingerprint: true
+      )
+    }
+  }
+}

@@ -20,6 +20,11 @@ case "$COMMAND" in
         [[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
         exec sudo -n /usr/local/libexec/homelab-stage6-inspect "$SERVICE"
         ;;
+    steady-inspect\ *)
+        SERVICE="${COMMAND#steady-inspect }"
+        [[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
+        exec sudo -n /usr/local/libexec/homelab-stage6-steady-inspect "$SERVICE"
+        ;;
     *)
         fail
         ;;
