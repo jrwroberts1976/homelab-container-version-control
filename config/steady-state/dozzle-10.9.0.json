@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "artifact": "service-steady-state-manifest",
+  "mode": "stage6-steady-state",
+  "authority": {
+    "repository": "docker-env",
+    "revision": "758c888fa0129d67ee90cfa14b1ffe232144c814",
+    "compose_sha256": "1713eee793179340b8441b2d0d11a99570e61e0df1b94c1448eaaa9273bc5d03",
+    "compose_path": "stacks/management/docker-compose.yml"
+  },
+  "service": {
+    "name": "dozzle",
+    "host": "TestServer",
+    "container": "dozzle",
+    "image_type": "registry-image",
+    "risk_class": "medium",
+    "compose": {
+      "project_directory": "/home/james/docker/stacks/management",
+      "project": "management",
+      "compose_file": "/home/james/docker/stacks/management/docker-compose.yml",
+      "service": "dozzle",
+      "image_variable": "DOZZLE_IMAGE"
+    }
+  },
+  "desired": {
+    "version": "10.9.0",
+    "image_repository": "amir20/dozzle",
+    "configured_image": "amir20/dozzle@sha256:7f01a2504f89788b60ad0efddd94472fd66f9a225c708356cdb815d9d8abd184",
+    "immutable_ref": "amir20/dozzle@sha256:7f01a2504f89788b60ad0efddd94472fd66f9a225c708356cdb815d9d8abd184",
+    "index_digest": "sha256:7f01a2504f89788b60ad0efddd94472fd66f9a225c708356cdb815d9d8abd184",
+    "local_image_id": "sha256:88b0c06d1a3c881893d2162afa4b19d1b91262e1ae92a90e661d8ccc2a5549d9",
+    "platform": {
+      "os": "linux",
+      "architecture": "arm64"
+    },
+    "metadata_verification": "digest-pinned",
+    "revision": "5dba2be0c31293b3990861fc7c04a6b1932c6989",
+    "created": "2026-09-02T00:42:23.092303923Z"
+  },
+  "runtime": {
+    "networks": [
+      "homelab_apps"
+    ],
+    "published_ports": [],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/var/run/docker.sock",
+        "destination": "/var/run/docker.sock",
+        "rw": false,
+        "source_kind": "socket",
+        "sha256": null
+      }
+    ],
+    "user": "",
+    "privileged": false,
+    "readonly_rootfs": false,
+    "restart_policy": "unless-stopped",
+    "devices_allowed": false,
+    "docker_socket_allowed": true
+  },
+  "health": {
+    "strategy": "container-http",
+    "expected": "200",
+    "url": null,
+    "network": "homelab_apps",
+    "container_port": 8080,
+    "path": "/",
+    "timeout_seconds": 180
+  },
+  "protection": {
+    "containers": [
+      "jenkins",
+      "jenkins-docker"
+    ]
+  }
+}
