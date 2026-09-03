@@ -177,14 +177,14 @@
       }
     },
     "dozzle": {
-      "desired_version": "10.8.0",
+      "desired_version": "10.9.0",
       "hosts": {
         "TestServer": {
-          "current_version": "10.8.0",
-          "configured_image": "amir20/dozzle@sha256:243666b0593ff33ed1373901575236f0d6bed8a2d6b451cdae4345969a7b6d5c",
+          "current_version": "10.9.0",
+          "configured_image": "amir20/dozzle@sha256:7f01a2504f89788b60ad0efddd94472fd66f9a225c708356cdb815d9d8abd184",
           "coverage": "managed-tested",
           "class": "readonly-docker-socket",
-          "manifest": "dozzle-10.8.0.json",
+          "manifest": "dozzle-10.9.0.json",
           "steady_state_manifest": "dozzle.json",
           "inspect_ready": true
         }
