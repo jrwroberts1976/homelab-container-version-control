@@ -14,11 +14,6 @@ pipeline {
       description: 'VERIFY_CLOSED proves existing closed state without mutation; UPDATE runs the reviewed deployment path'
     )
 
-    string(
-      name: 'STAGE6_MANIFEST',
-      defaultValue: '',
-      description: 'Reviewed manifest filename under config/services'
-    )
   }
 
   environment {
@@ -33,67 +28,161 @@ pipeline {
       }
     }
 
-    stage('Prepare missing manifest') {
+    stage('Select reviewed manifest') {
       steps {
         script {
           def action = params.STAGE6_ACTION?.trim()
+
           if (!(action in ['VERIFY_CLOSED', 'UPDATE'])) {
-            error('STAGE6_ACTION must be VERIFY_CLOSED or UPDATE')
+            error(
+              'STAGE6_ACTION must be VERIFY_CLOSED or UPDATE'
+            )
           }
 
-          def manifestName = params.STAGE6_MANIFEST?.trim()
+          sh '''
+            set -eu
+            set +x
+
+            install -d -m 0700 artifacts
+
+            for manifest in config/services/*.json
+            do
+              python3 \
+                scripts/validate-stage6-service-manifest.py \
+                "$manifest" \
+                --schema \
+                config/service-update-manifest.schema.json
+            done
+
+            python3 \
+              scripts/stage6-reviewed-manifest-selector.py \
+              "$STAGE6_ACTION" \
+              > artifacts/stage6-reviewed-selector.json
+
+            test -s \
+              artifacts/stage6-reviewed-selector.json
+          '''
+
+          def raw = readFile(
+            'artifacts/stage6-reviewed-selector.json'
+          )
+
+          def selector =
+            new groovy.json.JsonSlurperClassic()
+              .parseText(raw)
+
+          if (selector.schema_version != 1 ||
+              selector.artifact !=
+                'stage6-reviewed-manifest-selector' ||
+              selector.result !=
+                'current-estate-reviewed-choices-derived' ||
+              selector.action != action) {
+            error(
+              'Reviewed Stage 6 selector artifact invalid'
+            )
+          }
+
+          def entries = selector.choices
+
+          if (!(entries instanceof List) ||
+              entries.isEmpty()) {
+            error(
+              'No reviewed Stage 6 manifests available'
+            )
+          }
+
+          def labels = entries.collect {
+            it.label.toString()
+          }
+
+          if (labels.size() != labels.toSet().size()) {
+            error(
+              'Reviewed Stage 6 selector labels are not unique'
+            )
+          }
+
+          def selected = input(
+            message:
+              "Select reviewed Stage 6 service/version " +
+              "for ${action}",
+            ok: 'Use reviewed manifest',
+            parameters: [
+              choice(
+                name: 'STAGE6_REVIEWED_SELECTION',
+                choices: labels,
+                description:
+                  'Git-reviewed service | host | ' +
+                  'rollback -> candidate'
+              )
+            ]
+          ).toString()
+
+          def entry = entries.find {
+            it.label.toString() == selected
+          }
+
+          if (entry == null) {
+            error(
+              'Selected Stage 6 choice is outside ' +
+              'the Git-derived reviewed set'
+            )
+          }
+
+          def manifestName =
+            entry.manifest?.toString()
 
           if (!manifestName ||
-              !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
-            error('STAGE6_MANIFEST must be one safe manifest filename ending in .json')
+              !(manifestName ==~
+                /^[a-z0-9][a-z0-9.-]*\.json$/)) {
+            error(
+              'Resolved Stage 6 manifest filename is unsafe'
+            )
           }
 
-          def manifestPath = "config/services/${manifestName}"
+          def manifestPath =
+            "config/services/${manifestName}"
 
-          if (fileExists(manifestPath)) {
-            env.STAGE6_MANIFEST_PREPARED = 'false'
-            echo("PASS: reviewed Stage 6 manifest already present: ${manifestPath}")
-          } else {
-            env.STAGE6_MANIFEST_PREPARED = 'true'
-
-            sh '''
-              set -eu
-              set +x
-
-              python3 scripts/prepare-stage6-service-manifest.py \
-                --manifest-name "$STAGE6_MANIFEST" \
-                --output-dir artifacts
-            '''
-
-            def preparedPath = "artifacts/${manifestName}"
-
-            if (!fileExists(preparedPath)) {
-              error("Prepared Stage 6 manifest not found: ${preparedPath}")
-            }
-
-            echo("MANIFEST_PREPARED_REVIEW_REQUIRED: ${preparedPath}")
+          if (!fileExists(manifestPath)) {
+            error(
+              "Resolved reviewed manifest missing: " +
+              manifestPath
+            )
           }
-        }
-      }
-    }
 
-    stage('Manifest review required') {
-      when {
-        expression {
-          env.STAGE6_MANIFEST_PREPARED == 'true'
+          env.STAGE6_MANIFEST = manifestName
+
+          writeFile(
+            file:
+              'artifacts/stage6-reviewed-selection.json',
+            text:
+              groovy.json.JsonOutput.prettyPrint(
+                groovy.json.JsonOutput.toJson(
+                  [
+                    action: action,
+                    label: selected,
+                    manifest: manifestName,
+                    service:
+                      entry.service?.toString(),
+                    host:
+                      entry.host?.toString(),
+                    rollback_version:
+                      entry.rollback_version?.toString(),
+                    candidate_version:
+                      entry.candidate_version?.toString()
+                  ]
+                )
+              ) + '\n'
+          )
+
+          echo(
+            "PASS: Git-reviewed Stage 6 selection " +
+            "${selected}"
+          )
         }
-      }
-      steps {
-        echo('SUCCESS: requested Stage 6 manifest prepared and archived; review/commit required before deployment')
       }
     }
 
     stage('Load reviewed manifest') {
-      when {
-        expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true'
-        }
-      }
       steps {
         script {
           def action = params.STAGE6_ACTION?.trim()
@@ -101,7 +190,7 @@ pipeline {
             error('STAGE6_ACTION must be VERIFY_CLOSED or UPDATE')
           }
 
-          def manifestName = params.STAGE6_MANIFEST?.trim()
+          def manifestName = env.STAGE6_MANIFEST?.trim()
 
           if (!manifestName || !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
             error('STAGE6_MANIFEST must be one safe manifest filename ending in .json')
@@ -241,7 +330,7 @@ pipeline {
     stage('VERIFY_CLOSED') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'VERIFY_CLOSED'
+          params.STAGE6_ACTION == 'VERIFY_CLOSED'
         }
       }
       steps {
@@ -272,7 +361,7 @@ pipeline {
     stage('Source and host-key preflight') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -296,6 +385,7 @@ pipeline {
           test -f ops/ids01/homelab-stage6-inspector-authorized-key.template
           test -f ops/ids01/homelab-stage6-executor-authorized-key.template
           test -f scripts/stage6-normalize-executor-key.sh
+          test -f scripts/stage6-reviewed-manifest-selector.py
           test -f scripts/validate-stage6-candidate-acquisition.py
           test -f scripts/validate-stage6-acquirer-boundary.py
           test -f scripts/validate-stage6-jenkins-acquisition-boundary.py
@@ -303,6 +393,10 @@ pipeline {
           test -f config/service-update-manifest.schema.json
           test -f "$STAGE6_MANIFEST_PATH"
           test -s "$STAGE6_KNOWN_HOSTS"
+
+          python3 scripts/stage6-reviewed-manifest-selector.py \
+            "$STAGE6_ACTION" \
+            >/dev/null
 
           python3 scripts/validate-stage6-candidate-acquisition.py \
             ops/testserver/homelab-stage6-candidate-acquire
@@ -360,8 +454,7 @@ pipeline {
     stage('Candidate acquisition') {
       when {
         expression {
-          return env.STAGE6_MANIFEST_PREPARED != 'true' &&
-                 params.STAGE6_ACTION == 'UPDATE' &&
+          return params.STAGE6_ACTION == 'UPDATE' &&
                  (env.STAGE6_ACQUIRER_CREDENTIAL ?: '').trim() != ''
         }
       }
@@ -489,7 +582,7 @@ PYJSON
     stage('Pre-approval inspection') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -530,7 +623,7 @@ PYJSON
     stage('Assert pre-approval artifact') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -631,7 +724,7 @@ PYJSON
     stage('Human approval') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -668,7 +761,7 @@ PYJSON
     stage('Re-inspect after approval') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -709,7 +802,7 @@ PYJSON
     stage('Assert zero drift after approval') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -774,7 +867,7 @@ PYJSON
     stage('Executor preflight after approval') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -825,7 +918,7 @@ PYJSON
     stage('Arm exact update') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -896,7 +989,7 @@ PYJSON
     stage('Deploy exact candidate') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
@@ -995,7 +1088,7 @@ PYJSON
     stage('Rollback on deploy failure') {
       when {
         expression {
-          return env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE' &&
+          return params.STAGE6_ACTION == 'UPDATE' &&
                  env.STAGE6_DEPLOY_RC != null &&
                  env.STAGE6_DEPLOY_RC != '0' &&
                  env.STAGE6_DEPLOY_RC != '96' &&
@@ -1091,7 +1184,7 @@ PYJSON
     stage('Disarm terminal state') {
       when {
         expression {
-          return env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE' &&
+          return params.STAGE6_ACTION == 'UPDATE' &&
                  (env.STAGE6_DEPLOY_RC == '0' || env.STAGE6_ROLLBACK_RC == '0')
         }
       }
@@ -1160,7 +1253,7 @@ PYJSON
     stage('Final pipeline result') {
       when {
         expression {
-          env.STAGE6_MANIFEST_PREPARED != 'true' && params.STAGE6_ACTION == 'UPDATE'
+          params.STAGE6_ACTION == 'UPDATE'
         }
       }
       steps {
