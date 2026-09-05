@@ -17,6 +17,11 @@ if not path.is_file():
 text = path.read_text(encoding="utf-8")
 
 required = [
+    "stage('Select reviewed manifest')",
+    "name: 'STAGE6_REVIEWED_SELECTION'",
+    "scripts/stage6-reviewed-manifest-selector.py",
+    "current-estate-reviewed-choices-derived",
+    "env.STAGE6_MANIFEST = manifestName",
     "acquirerCredential: 'homelab-stage6-testserver-acquirer'",
     "env.STAGE6_ACQUIRER_CREDENTIAL = "
     "(route.acquirerCredential ?: '').toString()",
@@ -39,6 +44,65 @@ for needle in required:
         fail(f"required acquisition pipeline invariant missing: {needle}")
 
 
+selector_path = Path(
+    "scripts/stage6-reviewed-manifest-selector.py"
+)
+
+if not selector_path.is_file():
+    fail(
+        "Stage 6 reviewed-manifest selector source missing"
+    )
+
+selector_text = selector_path.read_text(
+    encoding="utf-8"
+)
+
+selector_required = [
+    "config/estate-updater-catalog.json",
+    'action not in {"UPDATE", "VERIFY_CLOSED"}',
+    'if action == "UPDATE":',
+    "current == rollback",
+    "current == candidate",
+    "current-estate-reviewed-choices-derived",
+]
+
+for needle in selector_required:
+    if needle not in selector_text:
+        fail(
+            "required current-estate selector invariant "
+            f"missing: {needle}"
+        )
+
+
+selector_invocation = (
+    'scripts/stage6-reviewed-manifest-selector.py \\\n'
+    '              "$STAGE6_ACTION"'
+)
+
+if selector_invocation not in text:
+    fail(
+        "Jenkins does not pass STAGE6_ACTION "
+        "to the reviewed-manifest selector"
+    )
+
+
+for forbidden in [
+    "name: 'STAGE6_MANIFEST'",
+    "params.STAGE6_MANIFEST",
+    "STAGE6_MANIFEST_PREPARED",
+    "stage('Prepare missing manifest')",
+    "stage('Manifest review required')",
+    "prepare-stage6-service-manifest.py",
+]:
+    if forbidden in text:
+        fail(
+            f"legacy free-text manifest selector remains: {forbidden}"
+        )
+
+
+checkout_pos = text.find("stage('Checkout')")
+selector_pos = text.find("stage('Select reviewed manifest')")
+load_pos = text.find("stage('Load reviewed manifest')")
 source_pos = text.find("stage('Source and host-key preflight')")
 acquire_pos = text.find("stage('Candidate acquisition')")
 inspect_pos = text.find("stage('Pre-approval inspection')")
@@ -47,6 +111,9 @@ reinspect_pos = text.find("stage('Re-inspect after approval')")
 executor_pos = text.find("stage('Executor preflight after approval')")
 
 positions = [
+    checkout_pos,
+    selector_pos,
+    load_pos,
     source_pos,
     acquire_pos,
     inspect_pos,
@@ -59,14 +126,20 @@ if any(pos < 0 for pos in positions):
     fail("one or more required Stage 6 stages are missing")
 
 if not (
-    source_pos
+    checkout_pos
+    < selector_pos
+    < load_pos
+    < source_pos
     < acquire_pos
     < inspect_pos
     < approval_pos
     < reinspect_pos
     < executor_pos
 ):
-    fail("Stage 6 acquisition/approval/executor ordering is unsafe")
+    fail(
+        "Stage 6 selector/acquisition/approval/"
+        "executor ordering is unsafe"
+    )
 
 
 preapproval_execution = text[acquire_pos:approval_pos]
