@@ -18,7 +18,7 @@ pipeline {
 
   environment {
     STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
-    STAGE6_FRAMEWORK_BASE_COMMIT = '05bfeac3e5ec495e00998d41161a55b497f5cb14'
+    STAGE6_FRAMEWORK_BASE_COMMIT = '3eaaf9b3698d6db0aa49d01f33ae68b749a78388'
   }
 
   stages {
@@ -322,6 +322,31 @@ pipeline {
             script: '''sha256sum ops/testserver/homelab-stage6-inspect | awk '{print $1}' '''
           ).trim()
 
+          env.STAGE6_AUTHORITY_INSPECTOR_SOURCE_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum ops/testserver/homelab-stage6-authority-inspect | awk '{print $1}' '''
+          ).trim()
+
+          env.STAGE6_CANDIDATE_ACQUIRE_SOURCE_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum ops/testserver/homelab-stage6-candidate-acquire | awk '{print $1}' '''
+          ).trim()
+
+          env.STAGE6_VALIDATOR_SOURCE_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum scripts/validate-stage6-service-manifest.py | awk '{print $1}' '''
+          ).trim()
+
+          env.STAGE6_ACQUIRER_WRAPPER_SOURCE_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum ops/testserver/homelab-stage6-acquirer-ssh | awk '{print $1}' '''
+          ).trim()
+
+          env.STAGE6_INSPECTOR_WRAPPER_SOURCE_SHA256 = sh(
+            returnStdout: true,
+            script: '''sha256sum ops/testserver/homelab-stage6-inspector-ssh | awk '{print $1}' '''
+          ).trim()
+
           echo("PASS: loaded reviewed Stage 6 manifest ${manifestName} for service ${service}")
         }
       }
@@ -369,6 +394,7 @@ pipeline {
           set -eu
           set +x
 
+          test -f ops/testserver/homelab-stage6-authority-inspect
           test -f ops/testserver/homelab-stage6-inspect
           test -f ops/testserver/homelab-stage6-inspector-ssh
           test -f ops/testserver/homelab-stage6-candidate-acquire
@@ -388,6 +414,8 @@ pipeline {
           test -f scripts/stage6-reviewed-manifest-selector.py
           test -f scripts/validate-stage6-candidate-acquisition.py
           test -f scripts/validate-stage6-acquirer-boundary.py
+          test -f scripts/validate-stage6-live-authority-boundary.py
+          test -f scripts/validate-stage6-jenkins-live-authority-boundary.py
           test -f scripts/validate-stage6-jenkins-acquisition-boundary.py
           test -f scripts/validate-stage6-service-manifest.py
           test -f config/service-update-manifest.schema.json
@@ -403,6 +431,10 @@ pipeline {
 
           python3 scripts/validate-stage6-acquirer-boundary.py
 
+          python3 scripts/validate-stage6-live-authority-boundary.py
+
+          python3 scripts/validate-stage6-jenkins-live-authority-boundary.py
+
           python3 scripts/validate-stage6-jenkins-acquisition-boundary.py
 
           printf '%s  %s\n' \
@@ -413,6 +445,7 @@ pipeline {
           git merge-base --is-ancestor "$STAGE6_FRAMEWORK_BASE_COMMIT" HEAD
 
           git diff --quiet "$STAGE6_FRAMEWORK_BASE_COMMIT" -- \
+            ops/testserver/homelab-stage6-authority-inspect \
             ops/testserver/homelab-stage6-inspect \
             ops/testserver/homelab-stage6-inspector-ssh \
             ops/testserver/homelab-stage6-candidate-acquire \
@@ -421,6 +454,7 @@ pipeline {
             ops/testserver/homelab-stage6-acquirer-authorized-key.template \
             scripts/validate-stage6-candidate-acquisition.py \
             scripts/validate-stage6-acquirer-boundary.py \
+            scripts/validate-stage6-live-authority-boundary.py \
             ops/testserver/homelab-stage6-transition \
             ops/testserver/homelab-stage6-execute \
             ops/testserver/homelab-stage6-executor-ssh \
@@ -448,6 +482,101 @@ pipeline {
 
           echo "PASS: generic Stage 6 source dependencies and $STAGE6_MANIFEST_HOST host key pinned"
         '''
+      }
+    }
+
+    stage('Live authority gate') {
+      when {
+        expression {
+          params.STAGE6_ACTION == 'UPDATE'
+        }
+      }
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: env.STAGE6_INSPECTOR_CREDENTIAL,
+            keyFileVariable: 'STAGE6_AUTHORITY_KEY',
+            usernameVariable: 'STAGE6_AUTHORITY_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_AUTHORITY_USER" = "homelab-stage6-inspector" ]
+
+            AUTHORITY_JSON="${STAGE6_ARTIFACT_PREFIX}-live-authority.json"
+
+            ssh \
+              -n \
+              -i "$STAGE6_AUTHORITY_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_AUTHORITY_USER@$STAGE6_HOST" \
+              "authority $STAGE6_SERVICE" \
+              </dev/null \
+              > "$AUTHORITY_JSON"
+
+            test -s "$AUTHORITY_JSON"
+          '''
+        }
+
+        script {
+          def raw = readFile(
+            "${env.STAGE6_ARTIFACT_PREFIX}-live-authority.json"
+          )
+
+          def a =
+            new groovy.json.JsonSlurperClassic()
+              .parseText(raw)
+
+          if (a.schema_version != 1 ||
+              a.artifact != 'stage6-live-authority' ||
+              a.result != 'live-authority-inspected' ||
+              a.service != env.STAGE6_SERVICE ||
+              a.host != env.STAGE6_MANIFEST_HOST) {
+            error(
+              'Stage 6 live-authority identity failed'
+            )
+          }
+
+          if (a.security?.root_owned != true ||
+              a.security?.non_symlink != true ||
+              a.security?.not_group_or_other_writable != true) {
+            error(
+              'Stage 6 live-authority security metadata failed'
+            )
+          }
+
+          if (a.manifest_sha256 !=
+                env.STAGE6_MANIFEST_SHA256 ||
+              a.implementation?.authority_inspector_sha256 !=
+                env.STAGE6_AUTHORITY_INSPECTOR_SOURCE_SHA256 ||
+              a.implementation?.candidate_acquire_sha256 !=
+                env.STAGE6_CANDIDATE_ACQUIRE_SOURCE_SHA256 ||
+              a.implementation?.service_validator_sha256 !=
+                env.STAGE6_VALIDATOR_SOURCE_SHA256 ||
+              a.implementation?.inspector_sha256 !=
+                env.STAGE6_INSPECTOR_SOURCE_SHA256 ||
+              a.implementation?.acquirer_wrapper_sha256 !=
+                env.STAGE6_ACQUIRER_WRAPPER_SOURCE_SHA256 ||
+              a.implementation?.inspector_wrapper_sha256 !=
+                env.STAGE6_INSPECTOR_WRAPPER_SOURCE_SHA256) {
+            error(
+              'Stage 6 live authority differs from reviewed Git source'
+            )
+          }
+
+          echo(
+            "PASS: live Stage 6 authority for " +
+            "${env.STAGE6_SERVICE} exactly matches reviewed Git source"
+          )
+        }
       }
     }
 
