@@ -76,9 +76,6 @@ done
 [ -x "$VALIDATOR" ] ||
     fail "service validator is not executable"
 
-"$VALIDATOR" "$MANIFEST" >/dev/null ||
-    fail "installed service manifest validation failed"
-
 MANIFEST_SERVICE="$(
     jq -er \
         '.service.name | strings | select(length > 0)' \

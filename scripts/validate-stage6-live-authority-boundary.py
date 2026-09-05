@@ -45,7 +45,6 @@ helper_required = [
     'INSPECTOR="/usr/local/libexec/homelab-stage6-inspect"',
     'ACQUIRER_WRAPPER="/usr/local/sbin/homelab-stage6-acquirer-ssh"',
     'INSPECTOR_WRAPPER="/usr/local/sbin/homelab-stage6-inspector-ssh"',
-    '"$VALIDATOR" "$MANIFEST" >/dev/null',
     'artifact: "stage6-live-authority"',
     'result: "live-authority-inspected"',
     "manifest_sha256",
@@ -62,6 +61,46 @@ for needle in helper_required:
         fail(
             "authority helper invariant missing: "
             f"{needle}"
+        )
+
+
+component_command = re.compile(
+    r'^[ \t]*'
+    r'(?:(?:exec|command)[ \t]+)?'
+    r'"\$('
+    r'VALIDATOR|'
+    r'INSPECTOR|'
+    r'CANDIDATE_ACQUIRE|'
+    r'ACQUIRER_WRAPPER|'
+    r'INSPECTOR_WRAPPER'
+    r')"'
+    r'(?:[ \t]|$)'
+)
+
+in_file_inventory = False
+
+for line_number, line in enumerate(
+    helper.splitlines(),
+    start=1,
+):
+    stripped = line.strip()
+
+    if stripped.startswith("for FILE in"):
+        in_file_inventory = True
+        continue
+
+    if in_file_inventory:
+        if stripped == "do":
+            in_file_inventory = False
+        continue
+
+    match = component_command.match(line)
+
+    if match is not None:
+        fail(
+            "authority helper executes unverified "
+            f"Stage 6 component on line {line_number}: "
+            f"{match.group(1)}"
         )
 
 
