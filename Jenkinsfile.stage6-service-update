@@ -133,7 +133,7 @@ pipeline {
 
           if (!manifestName ||
               !(manifestName ==~
-                /^[a-z0-9][a-z0-9.-]*\.json$/)) {
+                '^[a-z0-9][a-z0-9.-]*\\.json$')) {
             error(
               'Resolved Stage 6 manifest filename is unsafe'
             )
@@ -192,7 +192,7 @@ pipeline {
 
           def manifestName = env.STAGE6_MANIFEST?.trim()
 
-          if (!manifestName || !(manifestName ==~ /^[a-z0-9][a-z0-9.-]*\.json$/)) {
+          if (!manifestName || !(manifestName ==~ '^[a-z0-9][a-z0-9.-]*\\.json$')) {
             error('STAGE6_MANIFEST must be one safe manifest filename ending in .json')
           }
 
@@ -216,7 +216,7 @@ pipeline {
           def m = new groovy.json.JsonSlurperClassic().parseText(raw)
 
           def service = m.service?.name?.toString()
-          if (!service || !(service ==~ /^[a-z0-9][a-z0-9-]*$/)) {
+          if (!service || !(service ==~ '^[a-z0-9][a-z0-9-]*$')) {
             error('Manifest service name is not safe')
           }
 
@@ -265,7 +265,7 @@ pipeline {
           def candidate = m.versions?.candidate
           def candidateDigest = candidate?.index_digest?.toString()
 
-          if (!candidateDigest || !(candidateDigest ==~ /^sha256:[0-9a-f]{64}$/)) {
+          if (!candidateDigest || !(candidateDigest ==~ '^sha256:[0-9a-f]{64}$')) {
             error('Manifest candidate index digest is invalid')
           }
 
