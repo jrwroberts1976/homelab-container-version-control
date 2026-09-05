@@ -86,6 +86,19 @@ if selector_invocation not in text:
     )
 
 
+preflight_selector_invocation = (
+    'python3 scripts/stage6-reviewed-manifest-selector.py \\\n'
+    '            "$STAGE6_ACTION" \\\n'
+    '            >/dev/null'
+)
+
+if preflight_selector_invocation not in text:
+    fail(
+        "Stage 6 source preflight does not pass "
+        "STAGE6_ACTION to the reviewed-manifest selector"
+    )
+
+
 for forbidden in [
     "name: 'STAGE6_MANIFEST'",
     "params.STAGE6_MANIFEST",

@@ -395,6 +395,7 @@ pipeline {
           test -s "$STAGE6_KNOWN_HOSTS"
 
           python3 scripts/stage6-reviewed-manifest-selector.py \
+            "$STAGE6_ACTION" \
             >/dev/null
 
           python3 scripts/validate-stage6-candidate-acquisition.py \
