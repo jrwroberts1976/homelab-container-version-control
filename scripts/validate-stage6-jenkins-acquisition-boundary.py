@@ -99,6 +99,13 @@ if preflight_selector_invocation not in text:
     )
 
 
+if "==~ /" in text:
+    fail(
+        "slashy Groovy regex remains in Jenkinsfile; "
+        "use quoted regex strings for Declarative/CPS compatibility"
+    )
+
+
 for forbidden in [
     "name: 'STAGE6_MANIFEST'",
     "params.STAGE6_MANIFEST",
