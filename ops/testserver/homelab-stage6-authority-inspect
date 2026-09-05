@@ -1,0 +1,166 @@
+#!/bin/bash
+set -euo pipefail
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+MANIFEST_DIR="/etc/homelab-stage6/services"
+
+INSTALLED_SELF="/usr/local/libexec/homelab-stage6-authority-inspect"
+CANDIDATE_ACQUIRE="/usr/local/libexec/homelab-stage6-candidate-acquire"
+VALIDATOR="/usr/local/libexec/homelab-stage6-validate-service-manifest"
+INSPECTOR="/usr/local/libexec/homelab-stage6-inspect"
+ACQUIRER_WRAPPER="/usr/local/sbin/homelab-stage6-acquirer-ssh"
+INSPECTOR_WRAPPER="/usr/local/sbin/homelab-stage6-inspector-ssh"
+
+fail() {
+    printf 'FAIL: %s\n' "$1" >&2
+    exit 2
+}
+
+require_secure_root_file() {
+    local file="$1"
+
+    [ -f "$file" ] ||
+        fail "required file missing: $file"
+
+    [ ! -L "$file" ] ||
+        fail "required file must not be a symlink: $file"
+
+    [ "$(stat -c '%U:%G' "$file")" = "root:root" ] ||
+        fail "required file is not root:root: $file"
+
+    if find "$file" \
+        -maxdepth 0 \
+        -perm /022 \
+        -print -quit |
+        grep -q .
+    then
+        fail "required file is group/other writable: $file"
+    fi
+}
+
+file_sha256() {
+    sha256sum "$1" |
+        awk '{print $1}'
+}
+
+[ "$(id -u)" -eq 0 ] ||
+    fail "authority inspection requires root"
+
+[ "$#" -eq 1 ] ||
+    fail "usage: homelab-stage6-authority-inspect SERVICE"
+
+SERVICE="$1"
+
+[[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
+    fail "invalid service name"
+
+MANIFEST="${MANIFEST_DIR}/${SERVICE}.json"
+
+for FILE in \
+    "$INSTALLED_SELF" \
+    "$CANDIDATE_ACQUIRE" \
+    "$VALIDATOR" \
+    "$INSPECTOR" \
+    "$ACQUIRER_WRAPPER" \
+    "$INSPECTOR_WRAPPER" \
+    "$MANIFEST"
+do
+    require_secure_root_file "$FILE"
+done
+
+[ "$(readlink -f "$0")" = "$INSTALLED_SELF" ] ||
+    fail "authority inspector is not running from installed path"
+
+[ -x "$VALIDATOR" ] ||
+    fail "service validator is not executable"
+
+"$VALIDATOR" "$MANIFEST" >/dev/null ||
+    fail "installed service manifest validation failed"
+
+MANIFEST_SERVICE="$(
+    jq -er \
+        '.service.name | strings | select(length > 0)' \
+        "$MANIFEST"
+)" ||
+    fail "manifest service unavailable"
+
+[ "$MANIFEST_SERVICE" = "$SERVICE" ] ||
+    fail "manifest service mismatch"
+
+MANIFEST_HOST="$(
+    jq -er \
+        '.service.host | strings | select(length > 0)' \
+        "$MANIFEST"
+)" ||
+    fail "manifest host unavailable"
+
+[ "$(hostname -s)" = "$MANIFEST_HOST" ] ||
+    fail "manifest host does not match local machine"
+
+MANIFEST_SHA="$(
+    file_sha256 "$MANIFEST"
+)"
+
+SELF_SHA="$(
+    file_sha256 "$INSTALLED_SELF"
+)"
+
+CANDIDATE_ACQUIRE_SHA="$(
+    file_sha256 "$CANDIDATE_ACQUIRE"
+)"
+
+VALIDATOR_SHA="$(
+    file_sha256 "$VALIDATOR"
+)"
+
+INSPECTOR_SHA="$(
+    file_sha256 "$INSPECTOR"
+)"
+
+ACQUIRER_WRAPPER_SHA="$(
+    file_sha256 "$ACQUIRER_WRAPPER"
+)"
+
+INSPECTOR_WRAPPER_SHA="$(
+    file_sha256 "$INSPECTOR_WRAPPER"
+)"
+
+jq -n \
+    --arg service "$SERVICE" \
+    --arg host "$MANIFEST_HOST" \
+    --arg manifest_sha256 "$MANIFEST_SHA" \
+    --arg authority_inspector_sha256 "$SELF_SHA" \
+    --arg candidate_acquire_sha256 "$CANDIDATE_ACQUIRE_SHA" \
+    --arg service_validator_sha256 "$VALIDATOR_SHA" \
+    --arg inspector_sha256 "$INSPECTOR_SHA" \
+    --arg acquirer_wrapper_sha256 "$ACQUIRER_WRAPPER_SHA" \
+    --arg inspector_wrapper_sha256 "$INSPECTOR_WRAPPER_SHA" \
+    '{
+      schema_version: 1,
+      artifact: "stage6-live-authority",
+      result: "live-authority-inspected",
+      service: $service,
+      host: $host,
+      manifest_sha256: $manifest_sha256,
+      implementation: {
+        authority_inspector_sha256:
+          $authority_inspector_sha256,
+        candidate_acquire_sha256:
+          $candidate_acquire_sha256,
+        service_validator_sha256:
+          $service_validator_sha256,
+        inspector_sha256:
+          $inspector_sha256,
+        acquirer_wrapper_sha256:
+          $acquirer_wrapper_sha256,
+        inspector_wrapper_sha256:
+          $inspector_wrapper_sha256
+      },
+      security: {
+        root_owned: true,
+        non_symlink: true,
+        not_group_or_other_writable: true
+      }
+    }'
