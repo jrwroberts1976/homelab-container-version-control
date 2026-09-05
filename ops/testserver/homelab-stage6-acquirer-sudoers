@@ -1,0 +1,9 @@
+# Stage 6 Jenkins candidate-acquisition sudo boundary.
+#
+# This identity may invoke only the reviewed root-owned candidate-acquisition
+# helper with one safe service identifier.
+#
+# It receives no shell, Docker, Compose, Git, editor, file-copy, transition,
+# deploy, rollback or wildcard sudo authority.
+
+homelab-stage6-acquirer ALL=(root) NOPASSWD: /usr/local/libexec/homelab-stage6-candidate-acquire ^[a-z0-9][a-z0-9-]*$
