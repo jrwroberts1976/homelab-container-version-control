@@ -23,7 +23,7 @@ pipeline {
 
   environment {
     STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256 = 'acd2c312db447a98d735b38ebb6fe69270ade7caebb8f0e2668f0bf65e3d861f'
-    STAGE6_FRAMEWORK_BASE_COMMIT = '71685570399e51fbd44fe7b1a71bd2efebc94a24'
+    STAGE6_FRAMEWORK_BASE_COMMIT = '05bfeac3e5ec495e00998d41161a55b497f5cb14'
   }
 
   stages {
@@ -139,6 +139,7 @@ pipeline {
               knownHosts: '/var/jenkins_home/.ssh/stage4-testserver-known_hosts',
               hostKeyFingerprint: 'SHA256:PEDpP7QlmSztJSIYHzZ+YuIT7XurmpeWp85wRnlfZuk',
               inspectorCredential: 'homelab-stage6-testserver-inspector',
+              acquirerCredential: 'homelab-stage6-testserver-acquirer',
               executorCredential: 'homelab-stage6-testserver-executor',
               executorFingerprint: 'SHA256:A9VBS2vpB6+OvA62GhWXIMTgsNc2DdqOUX4eqLR58gY'
             ],
@@ -156,6 +157,13 @@ pipeline {
 
           if (route == null) {
             error('Manifest host is outside the reviewed Stage 6 routing table')
+          }
+
+          if (action == 'UPDATE' &&
+              !(route.acquirerCredential?.toString()?.trim())) {
+            error(
+              'UPDATE host has no reviewed Stage 6 candidate-acquirer route'
+            )
           }
 
           if (m.service?.container?.toString() != service ||
@@ -189,6 +197,7 @@ pipeline {
           env.STAGE6_KNOWN_HOSTS = route.knownHosts
           env.STAGE6_HOSTKEY_FINGERPRINT = route.hostKeyFingerprint
           env.STAGE6_INSPECTOR_CREDENTIAL = route.inspectorCredential
+          env.STAGE6_ACQUIRER_CREDENTIAL = (route.acquirerCredential ?: '').toString()
           env.STAGE6_EXECUTOR_CREDENTIAL = route.executorCredential
           env.STAGE6_EXECUTOR_FINGERPRINT = route.executorFingerprint
           env.STAGE6_UPDATE_ID = "stage6-${service}-${candidateDigest.substring(7)}"
@@ -203,6 +212,7 @@ pipeline {
 
           env.STAGE6_CANDIDATE_VERSION = candidate?.version?.toString()
           env.STAGE6_CANDIDATE_REF = candidate?.immutable_ref?.toString()
+          env.STAGE6_CANDIDATE_INDEX_DIGEST = candidateDigest
           env.STAGE6_CANDIDATE_IMAGE_ID = (candidate?.local_image_id ?: candidate?.config_digest)?.toString()
           env.STAGE6_CANDIDATE_PLATFORM_MANIFEST = candidate?.platform_manifest_digest?.toString()
           env.STAGE6_CANDIDATE_REVISION = candidate?.revision?.toString()
@@ -272,6 +282,10 @@ pipeline {
 
           test -f ops/testserver/homelab-stage6-inspect
           test -f ops/testserver/homelab-stage6-inspector-ssh
+          test -f ops/testserver/homelab-stage6-candidate-acquire
+          test -f ops/testserver/homelab-stage6-acquirer-ssh
+          test -f ops/testserver/homelab-stage6-acquirer-sudoers
+          test -f ops/testserver/homelab-stage6-acquirer-authorized-key.template
           test -f ops/testserver/homelab-stage6-transition
           test -f ops/testserver/homelab-stage6-execute
           test -f ops/testserver/homelab-stage6-executor-ssh
@@ -282,10 +296,20 @@ pipeline {
           test -f ops/ids01/homelab-stage6-inspector-authorized-key.template
           test -f ops/ids01/homelab-stage6-executor-authorized-key.template
           test -f scripts/stage6-normalize-executor-key.sh
+          test -f scripts/validate-stage6-candidate-acquisition.py
+          test -f scripts/validate-stage6-acquirer-boundary.py
+          test -f scripts/validate-stage6-jenkins-acquisition-boundary.py
           test -f scripts/validate-stage6-service-manifest.py
           test -f config/service-update-manifest.schema.json
           test -f "$STAGE6_MANIFEST_PATH"
           test -s "$STAGE6_KNOWN_HOSTS"
+
+          python3 scripts/validate-stage6-candidate-acquisition.py \
+            ops/testserver/homelab-stage6-candidate-acquire
+
+          python3 scripts/validate-stage6-acquirer-boundary.py
+
+          python3 scripts/validate-stage6-jenkins-acquisition-boundary.py
 
           printf '%s  %s\n' \
             "$STAGE6_EXECUTOR_KEY_NORMALIZER_SHA256" \
@@ -297,6 +321,12 @@ pipeline {
           git diff --quiet "$STAGE6_FRAMEWORK_BASE_COMMIT" -- \
             ops/testserver/homelab-stage6-inspect \
             ops/testserver/homelab-stage6-inspector-ssh \
+            ops/testserver/homelab-stage6-candidate-acquire \
+            ops/testserver/homelab-stage6-acquirer-ssh \
+            ops/testserver/homelab-stage6-acquirer-sudoers \
+            ops/testserver/homelab-stage6-acquirer-authorized-key.template \
+            scripts/validate-stage6-candidate-acquisition.py \
+            scripts/validate-stage6-acquirer-boundary.py \
             ops/testserver/homelab-stage6-transition \
             ops/testserver/homelab-stage6-execute \
             ops/testserver/homelab-stage6-executor-ssh \
@@ -324,6 +354,135 @@ pipeline {
 
           echo "PASS: generic Stage 6 source dependencies and $STAGE6_MANIFEST_HOST host key pinned"
         '''
+      }
+    }
+
+    stage('Candidate acquisition') {
+      when {
+        expression {
+          return env.STAGE6_MANIFEST_PREPARED != 'true' &&
+                 params.STAGE6_ACTION == 'UPDATE' &&
+                 (env.STAGE6_ACQUIRER_CREDENTIAL ?: '').trim() != ''
+        }
+      }
+      steps {
+        withCredentials([
+          sshUserPrivateKey(
+            credentialsId: env.STAGE6_ACQUIRER_CREDENTIAL,
+            keyFileVariable: 'STAGE6_ACQUIRE_KEY',
+            usernameVariable: 'STAGE6_ACQUIRE_USER'
+          )
+        ]) {
+          sh '''
+            set -eu
+            set +x
+
+            [ "$STAGE6_ACQUIRE_USER" = "homelab-stage6-acquirer" ]
+
+            RAW="${STAGE6_ARTIFACT_PREFIX}-candidate-acquisition-output.txt"
+            JSON="${STAGE6_ARTIFACT_PREFIX}-candidate-acquisition.json"
+
+            ssh \
+              -n \
+              -i "$STAGE6_ACQUIRE_KEY" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o PasswordAuthentication=no \
+              -o KbdInteractiveAuthentication=no \
+              -o ConnectTimeout=10 \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$STAGE6_KNOWN_HOSTS" \
+              "$STAGE6_ACQUIRE_USER@$STAGE6_HOST" \
+              "acquire $STAGE6_SERVICE" \
+              </dev/null \
+              > "$RAW"
+
+            test -s "$RAW"
+
+            python3 - "$RAW" "$JSON" <<'PYJSON'
+import json
+import sys
+from pathlib import Path
+
+raw_path = Path(sys.argv[1])
+json_path = Path(sys.argv[2])
+
+lines = raw_path.read_text(
+    encoding="utf-8"
+).splitlines()
+
+starts = [
+    i for i, line in enumerate(lines)
+    if line.strip() == "{"
+]
+
+if len(starts) != 1:
+    raise SystemExit(
+        "expected exactly one acquisition JSON object, "
+        f"found {len(starts)}"
+    )
+
+payload = "\n".join(lines[starts[0]:]) + "\n"
+
+obj = json.loads(payload)
+
+if not isinstance(obj, dict):
+    raise SystemExit(
+        "candidate acquisition JSON is not an object"
+    )
+
+json_path.write_text(
+    json.dumps(
+        obj,
+        indent=2,
+        sort_keys=True
+    ) + "\n",
+    encoding="utf-8",
+)
+PYJSON
+
+            test -s "$JSON"
+          '''
+        }
+
+        script {
+          def raw = readFile(
+            "${env.STAGE6_ARTIFACT_PREFIX}-candidate-acquisition.json"
+          )
+
+          def a = new groovy.json.JsonSlurperClassic().parseText(raw)
+
+          if (a.artifact != 'stage6-candidate-acquisition' ||
+              a.result != 'acquired-and-verified' ||
+              a.service != env.STAGE6_SERVICE) {
+            error('Stage 6 candidate-acquisition identity failed')
+          }
+
+          if (a.candidate_ref != env.STAGE6_CANDIDATE_REF ||
+              a.index_digest != env.STAGE6_CANDIDATE_INDEX_DIGEST ||
+              a.platform_manifest_digest !=
+                env.STAGE6_CANDIDATE_PLATFORM_MANIFEST ||
+              a.config_digest != env.STAGE6_CANDIDATE_IMAGE_ID ||
+              a.local_image_id != env.STAGE6_CANDIDATE_IMAGE_ID) {
+            error('Stage 6 acquired candidate identity differs from reviewed manifest')
+          }
+
+          def acquiredPlatform =
+            "${a.platform?.os}/${a.platform?.architecture}"
+
+          if (acquiredPlatform != env.STAGE6_CANDIDATE_PLATFORM) {
+            error('Stage 6 acquired candidate platform differs from reviewed manifest')
+          }
+
+          if (a.container_mutation_performed != false) {
+            error('Candidate acquisition reported container mutation')
+          }
+
+          echo(
+            "PASS: exact Stage 6 ${env.STAGE6_SERVICE} candidate " +
+            "acquired without container mutation"
+          )
+        }
       }
     }
 
