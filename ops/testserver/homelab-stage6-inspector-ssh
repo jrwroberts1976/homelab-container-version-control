@@ -15,6 +15,11 @@ case "$COMMAND" in
     ping)
         printf 'pong\n'
         ;;
+    authority\ *)
+        SERVICE="${COMMAND#authority }"
+        [[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
+        exec sudo -n /usr/local/libexec/homelab-stage6-authority-inspect "$SERVICE"
+        ;;
     inspect\ *)
         SERVICE="${COMMAND#inspect }"
         [[ "$SERVICE" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail
